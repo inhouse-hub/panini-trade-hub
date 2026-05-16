@@ -1,12 +1,9 @@
-import { AlbumSection, User, UserAlbum, StickerData } from './types'
+// lib/album-data.ts — REEMPLAZA el archivo existente
+import { AlbumSection, User, UserAlbum } from './types'
 
-// Album sections - special sections first, then countries
 export const ALBUM_SECTIONS: AlbumSection[] = [
-  // Special sections
   { code: 'FWC', name: 'FIFA World Cup', flag: '🏆', stickerCount: 18, startNumber: 0 },
   { code: 'CC', name: 'Coca-Cola', flag: '🥤', stickerCount: 14, startNumber: 1 },
-  
-  // Countries (20 stickers each, numbered 1-20)
   { code: 'MEX', name: 'México', flag: '🇲🇽', stickerCount: 20, startNumber: 1 },
   { code: 'RSA', name: 'Sudáfrica', flag: '🇿🇦', stickerCount: 20, startNumber: 1 },
   { code: 'KOR', name: 'Corea del Sur', flag: '🇰🇷', stickerCount: 20, startNumber: 1 },
@@ -57,14 +54,13 @@ export const ALBUM_SECTIONS: AlbumSection[] = [
   { code: 'PAN', name: 'Panamá', flag: '🇵🇦', stickerCount: 20, startNumber: 1 },
 ]
 
-// Default users
 export const DEFAULT_USERS: User[] = [
-  { id: 'roni', name: 'RoNi', avatar: '⚽', createdAt: Date.now() },
-  { id: 'carlos', name: 'Carlos', avatar: '🏆', createdAt: Date.now() },
-  { id: 'fabio', name: 'Fabio', avatar: '🌟', createdAt: Date.now() },
+  { id: 'jorge', name: 'Jorge', avatar: '👑', pin: '9999', isAdmin: true, createdAt: Date.now() },
+  { id: 'roni', name: 'RoNi', avatar: '⚽', pin: '1234', createdAt: Date.now() },
+  { id: 'carlos', name: 'Carlos', avatar: '🏆', pin: '1234', createdAt: Date.now() },
+  { id: 'fabio', name: 'Fabio', avatar: '🌟', pin: '1234', createdAt: Date.now() },
 ]
 
-// RoNi's missing stickers data
 export const RONI_MISSING_DATA: { [sectionCode: string]: number[] } = {
   FWC: [0, 1, 4, 5, 8],
   CC: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
@@ -118,28 +114,22 @@ export const RONI_MISSING_DATA: { [sectionCode: string]: number[] } = {
   PAN: [1, 2, 4, 5, 6, 8, 10, 12, 14, 15, 16, 20],
 }
 
-// Generate empty album structure
 export function createEmptyAlbum(): UserAlbum {
   const album: UserAlbum = {}
-  
   for (const section of ALBUM_SECTIONS) {
     album[section.code] = {}
     for (let i = section.startNumber; i < section.startNumber + section.stickerCount; i++) {
       album[section.code][i.toString()] = { state: 'unmarked', count: 0 }
     }
   }
-  
   return album
 }
 
-// Generate RoNi's initial album
 export function createRoniAlbum(): UserAlbum {
   const album: UserAlbum = {}
-  
   for (const section of ALBUM_SECTIONS) {
     album[section.code] = {}
     const missingSet = new Set(RONI_MISSING_DATA[section.code] || [])
-    
     for (let i = section.startNumber; i < section.startNumber + section.stickerCount; i++) {
       if (missingSet.has(i)) {
         album[section.code][i.toString()] = { state: 'missing', count: 0 }
@@ -148,14 +138,11 @@ export function createRoniAlbum(): UserAlbum {
       }
     }
   }
-  
   return album
 }
 
-// Get total sticker count
 export function getTotalStickerCount(): number {
   return ALBUM_SECTIONS.reduce((total, section) => total + section.stickerCount, 0)
 }
 
-// Avatar options
-export const AVATAR_OPTIONS = ['⚽', '🏆', '🌟', '🔥', '⭐', '💫', '🎯', '🥇', '🏅', '👑', '🦁', '🐺']
+export const AVATAR_OPTIONS = ['⚽', '🏆', '🌟', '🔥', '⭐', '💫', '🎯', '🥇', '🏅', '👑', '🦁', '🐺', '🚀', '⚡', '💎', '🎨']

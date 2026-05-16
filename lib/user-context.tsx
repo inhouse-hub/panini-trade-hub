@@ -1,31 +1,19 @@
-// lib/user-context.tsx — REEMPLAZA el archivo existente con este
-// Misma API que el original PERO sincroniza con Supabase si hay credenciales.
-// Si no las hay, se queda en modo localStorage (offline).
-
+// lib/user-context.tsx — REEMPLAZA el archivo existente
 'use client'
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react'
-import { User, UserAlbum, StickerState, TradeRecord, TradeStatus } from './types'
+import { User, UserAlbum, StickerState, TradeRecord, TradeStatus, Notification, NotificationType } from './types'
 import { DEFAULT_USERS, createEmptyAlbum, createRoniAlbum, ALBUM_SECTIONS } from './album-data'
 import {
-  isSupabaseEnabled,
-  fetchUsers,
-  upsertUser,
-  deleteUserRemote,
-  fetchAllAlbums,
-  saveAlbum,
-  fetchTrades,
-  createTrade as createTradeRemote,
-  updateTradeStatus,
-  subscribeToTrades,
-  subscribeToAlbums,
+  isSupabaseEnabled, fetchUsers, upsertUser, deleteUserRemote,
+  fetchAllAlbums, saveAlbum, fetchTrades, createTrade as createTradeRemote,
+  updateTradeStatus, subscribeToTrades, subscribeToAlbums,
+  fetchNotifications, createNotification, markNotificationRead,
+  markAllNotificationsRead, subscribeToNotifications,
 } from './supabase'
 
 const STORAGE_KEYS = {
-  USERS: 'panini_users',
   ACTIVE_USER: 'panini_active_user',
-  ALBUMS: 'panini_albums',
-  TRADES: 'panini_trades',
   UNDO_HISTORY: 'panini_undo_history',
 }
 
@@ -40,15 +28,19 @@ interface UserContextType {
   activeUser: User | null
   activeUserAlbum: UserAlbum | null
   trades: TradeRecord[]
+  notifications: Notification[]
+  unreadCount: number
   viewingUserId: string | null
   viewingUserAlbum: UserAlbum | null
   canUndo: boolean
   lastSaveTime: number | null
-  isOnline: boolean // NEW: indica si Supabase está conectado
+  isOnline: boolean
+  isAdmin: boolean
   setActiveUser: (userId: string) => void
+  signOut: () => void
   setViewingUser: (userId: string | null) => void
   addUser: (name: string, avatar: string, pin?: string) => void
-  updateUser: (userId: string, name: string, avatar: string, pin?: string) => void
+  updateUser: (userId: string, updates: Partial<Pick<User, 'name' | 'avatar' | 'pin' | 'isAdmin'>>) => void
   deleteUser: (userId: string) => void
   updateStickerState: (sectionCode: string, stickerNumber: string, state: StickerState, count?: number) => void
   cycleStickerState: (sectionCode: string, stickerNumber: string) => void
@@ -57,8 +49,13 @@ interface UserContextType {
   clearSection: (sectionCode: string) => void
   getUserAlbum: (userId: string) => UserAlbum | null
   executeTrade: (fromUserId: string, toUserId: string, given: string[], received: string[]) => void
+  proposeTrade: (toUserId: string, given: string[], received: string[]) => void
+  acceptTrade: (tradeId: string) => void
+  rejectTrade: (tradeId: string) => void
   completeTrade: (tradeId: string) => void
-  updateTradeRecordStatus: (tradeId: string, status: TradeStatus) => void
+  pushNotification: (userId: string, type: NotificationType, title: string, message?: string, data?: any) => void
+  markNotifRead: (id: string) => void
+  markAllNotifsRead: () => void
   getStats: (userId: string) => { total: number; has: number; missing: number; repeated: number; unmarked: number; repeatedCount: number }
   undo: () => void
 }
@@ -70,6 +67,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const [activeUserId, setActiveUserId] = useState<string | null>(null)
   const [albums, setAlbums] = useState<{ [userId: string]: UserAlbum }>({})
   const [trades, setTrades] = useState<TradeRecord[]>([])
+  const [notifications, setNotifications] = useState<Notification[]>([])
   const [isInitialized, setIsInitialized] = useState(false)
   const [viewingUserId, setViewingUserId] = useState<string | null>(null)
   const [undoHistory, setUndoHistory] = useState<UndoSnapshot[]>([])
@@ -78,49 +76,43 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const pendingAlbumSaves = useRef<Set<string>>(new Set())
 
-  // ── Inicialización: carga desde Supabase si está habilitado, sino localStorage
+  // ── Init from Supabase ────────────────────────────────────
   useEffect(() => {
     if (typeof window === 'undefined') return
 
     async function init() {
       if (isSupabaseEnabled) {
         try {
-          // Cargar desde Supabase
           const [remoteUsers, remoteAlbums, remoteTrades] = await Promise.all([
-            fetchUsers(),
-            fetchAllAlbums(),
-            fetchTrades(),
+            fetchUsers(), fetchAllAlbums(), fetchTrades(),
           ])
 
           if (remoteUsers.length === 0) {
-            // Primera vez: subir los defaults
-            const defaults = DEFAULT_USERS.map(u => ({ ...u, pin: u.pin || '1234' }))
-            for (const user of defaults) await upsertUser(user)
-            setUsers(defaults)
-
+            for (const user of DEFAULT_USERS) await upsertUser(user)
+            setUsers(DEFAULT_USERS)
             const initialAlbums: { [k: string]: UserAlbum } = {
+              jorge: createEmptyAlbum(),
               roni: createRoniAlbum(),
               carlos: createEmptyAlbum(),
               fabio: createEmptyAlbum(),
             }
-            for (const [uid, alb] of Object.entries(initialAlbums)) {
-              await saveAlbum(uid, alb)
-            }
+            for (const [uid, alb] of Object.entries(initialAlbums)) await saveAlbum(uid, alb)
             setAlbums(initialAlbums)
           } else {
-            setUsers(remoteUsers)
-
-            // Si RoNi existe pero su álbum está vacío, lo sembramos
-            const albumsToSet: { [k: string]: UserAlbum } = { ...remoteAlbums }
-            const roniExists = remoteUsers.find(u => u.id === 'roni')
-            if (roniExists && (!albumsToSet.roni || Object.keys(albumsToSet.roni).length === 0)) {
-              albumsToSet.roni = createRoniAlbum()
-              await saveAlbum('roni', albumsToSet.roni)
+            // Verifica que Jorge exista; si no, lo crea
+            let usersToUse = remoteUsers
+            const hasJorge = remoteUsers.find(u => u.id === 'jorge')
+            if (!hasJorge) {
+              const jorge = DEFAULT_USERS.find(u => u.id === 'jorge')!
+              await upsertUser(jorge)
+              usersToUse = [...remoteUsers, jorge]
             }
-            // Cualquier usuario sin álbum, asignar vacío
-            for (const user of remoteUsers) {
+            setUsers(usersToUse)
+
+            const albumsToSet: { [k: string]: UserAlbum } = { ...remoteAlbums }
+            for (const user of usersToUse) {
               if (!albumsToSet[user.id]) {
-                albumsToSet[user.id] = createEmptyAlbum()
+                albumsToSet[user.id] = user.id === 'roni' ? createRoniAlbum() : createEmptyAlbum()
                 await saveAlbum(user.id, albumsToSet[user.id])
               }
             }
@@ -130,16 +122,13 @@ export function UserProvider({ children }: { children: ReactNode }) {
           setTrades(remoteTrades)
           setIsOnline(true)
         } catch (e) {
-          console.error('Supabase init failed, falling back to localStorage:', e)
-          loadFromLocalStorage()
+          console.error('Supabase init failed:', e)
         }
-      } else {
-        loadFromLocalStorage()
       }
 
-      // Active user desde localStorage (preferencia del dispositivo)
-      const storedActiveUser = localStorage.getItem(STORAGE_KEYS.ACTIVE_USER)
-      if (storedActiveUser) setActiveUserId(storedActiveUser)
+      // NO recuperar active user de localStorage en fase 3:
+      // queremos que SIEMPRE empiece en la pantalla de PIN
+      // (eso lo controla app/page.tsx, no aquí)
 
       const storedUndo = localStorage.getItem(STORAGE_KEYS.UNDO_HISTORY)
       if (storedUndo) setUndoHistory(JSON.parse(storedUndo))
@@ -147,38 +136,10 @@ export function UserProvider({ children }: { children: ReactNode }) {
       setIsInitialized(true)
     }
 
-    function loadFromLocalStorage() {
-      const storedUsers = localStorage.getItem(STORAGE_KEYS.USERS)
-      const storedAlbums = localStorage.getItem(STORAGE_KEYS.ALBUMS)
-      const storedTrades = localStorage.getItem(STORAGE_KEYS.TRADES)
-
-      if (storedUsers) {
-        setUsers(JSON.parse(storedUsers))
-      } else {
-        const defaults = DEFAULT_USERS.map(u => ({ ...u, pin: u.pin || '1234' }))
-        setUsers(defaults)
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(defaults))
-      }
-
-      if (storedAlbums) {
-        setAlbums(JSON.parse(storedAlbums))
-      } else {
-        const initial: { [k: string]: UserAlbum } = {
-          roni: createRoniAlbum(),
-          carlos: createEmptyAlbum(),
-          fabio: createEmptyAlbum(),
-        }
-        setAlbums(initial)
-        localStorage.setItem(STORAGE_KEYS.ALBUMS, JSON.stringify(initial))
-      }
-
-      if (storedTrades) setTrades(JSON.parse(storedTrades))
-    }
-
     init()
   }, [])
 
-  // ── Suscripciones realtime (para que Carlos vea cambios de RoNi en vivo)
+  // ── Realtime subscriptions ────────────────────────────────
   useEffect(() => {
     if (!isInitialized || !isOnline) return
 
@@ -192,18 +153,23 @@ export function UserProvider({ children }: { children: ReactNode }) {
       setAlbums(prev => ({ ...prev, ...fresh }))
     })
 
-    return () => {
-      unsubTrades()
-      unsubAlbums()
-    }
+    return () => { unsubTrades(); unsubAlbums() }
   }, [isInitialized, isOnline])
 
-  // ── Persistencia local (cache)
+  // ── Subscribe to notifications for active user ───────────
   useEffect(() => {
-    if (!isInitialized) return
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users))
-  }, [users, isInitialized])
+    if (!isInitialized || !isOnline || !activeUserId) return
 
+    fetchNotifications(activeUserId).then(setNotifications)
+
+    const unsub = subscribeToNotifications(activeUserId, async () => {
+      const fresh = await fetchNotifications(activeUserId)
+      setNotifications(fresh)
+    })
+    return () => unsub()
+  }, [isInitialized, isOnline, activeUserId])
+
+  // ── Persistence (only active user pref locally) ──────────
   useEffect(() => {
     if (!isInitialized || !activeUserId) return
     localStorage.setItem(STORAGE_KEYS.ACTIVE_USER, activeUserId)
@@ -211,10 +177,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isInitialized) return
-    localStorage.setItem(STORAGE_KEYS.ALBUMS, JSON.stringify(albums))
     setLastSaveTime(Date.now())
-
-    // Sincronizar a Supabase con debounce
     if (isOnline && pendingAlbumSaves.current.size > 0) {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
       saveTimeoutRef.current = setTimeout(async () => {
@@ -229,11 +192,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isInitialized) return
-    localStorage.setItem(STORAGE_KEYS.TRADES, JSON.stringify(trades))
-  }, [trades, isInitialized])
-
-  useEffect(() => {
-    if (!isInitialized) return
     localStorage.setItem(STORAGE_KEYS.UNDO_HISTORY, JSON.stringify(undoHistory))
   }, [undoHistory, isInitialized])
 
@@ -241,20 +199,28 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const activeUserAlbum = activeUserId ? albums[activeUserId] || null : null
   const viewingUserAlbum = viewingUserId ? albums[viewingUserId] || null : null
   const canUndo = undoHistory.length > 0 && undoHistory[0]?.userId === activeUserId
+  const isAdmin = activeUser?.isAdmin === true
+  const unreadCount = notifications.filter(n => !n.read).length
 
   const saveUndoSnapshot = useCallback(() => {
     if (!activeUserId || !albums[activeUserId]) return
-    const snapshot: UndoSnapshot = {
+    setUndoHistory([{
       userId: activeUserId,
       album: JSON.parse(JSON.stringify(albums[activeUserId])),
       timestamp: Date.now(),
-    }
-    setUndoHistory([snapshot])
+    }])
   }, [activeUserId, albums])
 
   const setActiveUser = useCallback((userId: string) => {
     setActiveUserId(userId)
     setViewingUserId(null)
+  }, [])
+
+  const signOut = useCallback(() => {
+    setActiveUserId(null)
+    setViewingUserId(null)
+    setNotifications([])
+    localStorage.removeItem(STORAGE_KEYS.ACTIVE_USER)
   }, [])
 
   const setViewingUser = useCallback((userId: string | null) => {
@@ -263,7 +229,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const addUser = useCallback((name: string, avatar: string, pin: string = '1234') => {
     const id = `user_${Date.now()}`
-    const newUser: User = { id, name, avatar, pin, createdAt: Date.now() }
+    const newUser: User = { id, name, avatar, pin, isAdmin: false, createdAt: Date.now() }
     setUsers(prev => [...prev, newUser])
     setAlbums(prev => ({ ...prev, [id]: createEmptyAlbum() }))
     if (isOnline) {
@@ -272,10 +238,10 @@ export function UserProvider({ children }: { children: ReactNode }) {
     }
   }, [isOnline])
 
-  const updateUser = useCallback((userId: string, name: string, avatar: string, pin?: string) => {
+  const updateUser = useCallback((userId: string, updates: Partial<Pick<User, 'name' | 'avatar' | 'pin' | 'isAdmin'>>) => {
     setUsers(prev => prev.map(u => {
       if (u.id !== userId) return u
-      const updated = { ...u, name, avatar, ...(pin ? { pin } : {}) }
+      const updated: User = { ...u, ...updates }
       if (isOnline) upsertUser(updated)
       return updated
     }))
@@ -316,20 +282,20 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const cycleStickerState = useCallback((sectionCode: string, stickerNumber: string) => {
     if (!activeUserId || !albums[activeUserId]) return
-    const currentSticker = albums[activeUserId][sectionCode]?.[stickerNumber]
-    const currentState = currentSticker?.state || 'unmarked'
-    const stateOrder: StickerState[] = ['unmarked', 'has', 'repeated', 'missing']
-    const currentIndex = stateOrder.indexOf(currentState)
-    const nextState = stateOrder[(currentIndex + 1) % stateOrder.length]
-    const nextCount = nextState === 'repeated' ? 2 : nextState === 'has' ? 1 : 0
-    updateStickerState(sectionCode, stickerNumber, nextState, nextCount)
+    const cur = albums[activeUserId][sectionCode]?.[stickerNumber]
+    const curState = cur?.state || 'unmarked'
+    const order: StickerState[] = ['unmarked', 'has', 'repeated', 'missing']
+    const idx = order.indexOf(curState)
+    const next = order[(idx + 1) % order.length]
+    const nextCount = next === 'repeated' ? 2 : next === 'has' ? 1 : 0
+    updateStickerState(sectionCode, stickerNumber, next, nextCount)
   }, [activeUserId, albums, updateStickerState])
 
   const updateStickerCount = useCallback((sectionCode: string, stickerNumber: string, delta: number) => {
     if (!activeUserId || !albums[activeUserId]) return
-    const currentSticker = albums[activeUserId][sectionCode]?.[stickerNumber]
-    if (currentSticker?.state !== 'repeated') return
-    const newCount = Math.max(2, currentSticker.count + delta)
+    const cur = albums[activeUserId][sectionCode]?.[stickerNumber]
+    if (cur?.state !== 'repeated') return
+    const newCount = Math.max(2, cur.count + delta)
     updateStickerState(sectionCode, stickerNumber, 'repeated', newCount)
   }, [activeUserId, albums, updateStickerState])
 
@@ -342,18 +308,9 @@ export function UserProvider({ children }: { children: ReactNode }) {
     setAlbums(prev => {
       const newSection: { [key: string]: { state: StickerState; count: number } } = {}
       for (let i = section.startNumber; i < section.startNumber + section.stickerCount; i++) {
-        newSection[i.toString()] = {
-          state,
-          count: state === 'repeated' ? 2 : state === 'has' ? 1 : 0
-        }
+        newSection[i.toString()] = { state, count: state === 'repeated' ? 2 : state === 'has' ? 1 : 0 }
       }
-      return {
-        ...prev,
-        [activeUserId]: {
-          ...prev[activeUserId],
-          [sectionCode]: newSection
-        }
-      }
+      return { ...prev, [activeUserId]: { ...prev[activeUserId], [sectionCode]: newSection } }
     })
   }, [activeUserId, saveUndoSnapshot])
 
@@ -361,79 +318,107 @@ export function UserProvider({ children }: { children: ReactNode }) {
     markAllSection(sectionCode, 'unmarked')
   }, [markAllSection])
 
-  const getUserAlbum = useCallback((userId: string) => {
-    return albums[userId] || null
-  }, [albums])
+  const getUserAlbum = useCallback((userId: string) => albums[userId] || null, [albums])
+
+  const pushNotification = useCallback((userId: string, type: NotificationType, title: string, message?: string, data?: any) => {
+    const notif: Notification = {
+      id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      userId, type, title, message, data, read: false, createdAt: Date.now(),
+    }
+    if (isOnline) createNotification(notif)
+  }, [isOnline])
+
+  const proposeTrade = useCallback((toUserId: string, given: string[], received: string[]) => {
+    if (!activeUserId) return
+    const trade: TradeRecord = {
+      id: `trade_${Date.now()}`,
+      fromUserId: activeUserId, toUserId,
+      givenStickers: given, receivedStickers: received,
+      status: 'pending', timestamp: Date.now(), completed: false,
+    }
+    setTrades(prev => [trade, ...prev])
+    if (isOnline) createTradeRemote(trade)
+    const fromName = users.find(u => u.id === activeUserId)?.name || 'Alguien'
+    pushNotification(toUserId, 'trade_proposal',
+      `🔄 ${fromName} te propone un trade`,
+      `Te ofrece ${received.length} estampa(s) a cambio de ${given.length}`,
+      { tradeId: trade.id })
+  }, [activeUserId, isOnline, users, pushNotification])
 
   const executeTrade = useCallback((fromUserId: string, toUserId: string, given: string[], received: string[]) => {
     pendingAlbumSaves.current.add(fromUserId)
     pendingAlbumSaves.current.add(toUserId)
 
     setAlbums(prev => {
-      const newAlbums = JSON.parse(JSON.stringify(prev)) // Deep copy
+      const newAlbums = JSON.parse(JSON.stringify(prev))
 
-      // Given (from -> to)
       for (const sticker of given) {
-        const [sectionCode, number] = sticker.split('-')
-        if (newAlbums[fromUserId]?.[sectionCode]?.[number]) {
-          const cur = newAlbums[fromUserId][sectionCode][number]
-          const newCount = cur.count - 1
-          newAlbums[fromUserId][sectionCode][number] = newCount <= 1
-            ? { state: 'has', count: 1 }
-            : { state: 'repeated', count: newCount }
+        const [sc, num] = sticker.split('-')
+        if (newAlbums[fromUserId]?.[sc]?.[num]) {
+          const c = newAlbums[fromUserId][sc][num]
+          const nc = c.count - 1
+          newAlbums[fromUserId][sc][num] = nc <= 1 ? { state: 'has', count: 1 } : { state: 'repeated', count: nc }
         }
         if (!newAlbums[toUserId]) newAlbums[toUserId] = {}
-        if (!newAlbums[toUserId][sectionCode]) newAlbums[toUserId][sectionCode] = {}
-        newAlbums[toUserId][sectionCode][number] = { state: 'has', count: 1 }
+        if (!newAlbums[toUserId][sc]) newAlbums[toUserId][sc] = {}
+        newAlbums[toUserId][sc][num] = { state: 'has', count: 1 }
       }
-
-      // Received (to -> from)
       for (const sticker of received) {
-        const [sectionCode, number] = sticker.split('-')
-        if (newAlbums[toUserId]?.[sectionCode]?.[number]) {
-          const cur = newAlbums[toUserId][sectionCode][number]
-          const newCount = cur.count - 1
-          newAlbums[toUserId][sectionCode][number] = newCount <= 1
-            ? { state: 'has', count: 1 }
-            : { state: 'repeated', count: newCount }
+        const [sc, num] = sticker.split('-')
+        if (newAlbums[toUserId]?.[sc]?.[num]) {
+          const c = newAlbums[toUserId][sc][num]
+          const nc = c.count - 1
+          newAlbums[toUserId][sc][num] = nc <= 1 ? { state: 'has', count: 1 } : { state: 'repeated', count: nc }
         }
         if (!newAlbums[fromUserId]) newAlbums[fromUserId] = {}
-        if (!newAlbums[fromUserId][sectionCode]) newAlbums[fromUserId][sectionCode] = {}
-        newAlbums[fromUserId][sectionCode][number] = { state: 'has', count: 1 }
+        if (!newAlbums[fromUserId][sc]) newAlbums[fromUserId][sc] = {}
+        newAlbums[fromUserId][sc][num] = { state: 'has', count: 1 }
       }
 
-      // Persistir a Supabase
       if (isOnline) {
         saveAlbum(fromUserId, newAlbums[fromUserId])
         saveAlbum(toUserId, newAlbums[toUserId])
       }
-
       return newAlbums
     })
-
-    const trade: TradeRecord = {
-      id: `trade_${Date.now()}`,
-      fromUserId,
-      toUserId,
-      givenStickers: given,
-      receivedStickers: received,
-      status: 'completed', // Por ahora, hasta la Fase 2 los trades son inmediatos
-      timestamp: Date.now(),
-      completed: true,
-    }
-    setTrades(prev => [trade, ...prev])
-    if (isOnline) createTradeRemote(trade)
   }, [isOnline])
+
+  const acceptTrade = useCallback((tradeId: string) => {
+    const trade = trades.find(t => t.id === tradeId)
+    if (!trade) return
+    executeTrade(trade.fromUserId, trade.toUserId, trade.givenStickers, trade.receivedStickers)
+    setTrades(prev => prev.map(t => t.id === tradeId ? { ...t, status: 'completed' as TradeStatus, completed: true } : t))
+    if (isOnline) updateTradeStatus(tradeId, 'completed')
+    const toName = users.find(u => u.id === trade.toUserId)?.name || 'Alguien'
+    pushNotification(trade.fromUserId, 'trade_accepted',
+      `✅ ${toName} aceptó tu trade`, undefined, { tradeId })
+  }, [trades, executeTrade, isOnline, users, pushNotification])
+
+  const rejectTrade = useCallback((tradeId: string) => {
+    const trade = trades.find(t => t.id === tradeId)
+    if (!trade) return
+    setTrades(prev => prev.map(t => t.id === tradeId ? { ...t, status: 'rejected' as TradeStatus } : t))
+    if (isOnline) updateTradeStatus(tradeId, 'rejected')
+    const toName = users.find(u => u.id === trade.toUserId)?.name || 'Alguien'
+    pushNotification(trade.fromUserId, 'trade_rejected',
+      `❌ ${toName} rechazó tu trade`, undefined, { tradeId })
+  }, [trades, isOnline, users, pushNotification])
 
   const completeTrade = useCallback((tradeId: string) => {
     setTrades(prev => prev.map(t => t.id === tradeId ? { ...t, completed: true, status: 'completed' as TradeStatus } : t))
     if (isOnline) updateTradeStatus(tradeId, 'completed')
   }, [isOnline])
 
-  const updateTradeRecordStatus = useCallback((tradeId: string, status: TradeStatus) => {
-    setTrades(prev => prev.map(t => t.id === tradeId ? { ...t, status, completed: status === 'completed' } : t))
-    if (isOnline) updateTradeStatus(tradeId, status)
+  const markNotifRead = useCallback((id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))
+    if (isOnline) markNotificationRead(id)
   }, [isOnline])
+
+  const markAllNotifsRead = useCallback(() => {
+    if (!activeUserId) return
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+    if (isOnline) markAllNotificationsRead(activeUserId)
+  }, [activeUserId, isOnline])
 
   const getStats = useCallback((userId: string) => {
     const album = albums[userId]
@@ -475,31 +460,14 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   return (
     <UserContext.Provider value={{
-      users,
-      activeUser,
-      activeUserAlbum,
-      trades,
-      viewingUserId,
-      viewingUserAlbum,
-      canUndo,
-      lastSaveTime,
-      isOnline,
-      setActiveUser,
-      setViewingUser,
-      addUser,
-      updateUser,
-      deleteUser,
-      updateStickerState,
-      cycleStickerState,
-      updateStickerCount,
-      markAllSection,
-      clearSection,
-      getUserAlbum,
-      executeTrade,
-      completeTrade,
-      updateTradeRecordStatus,
-      getStats,
-      undo,
+      users, activeUser, activeUserAlbum, trades, notifications, unreadCount,
+      viewingUserId, viewingUserAlbum, canUndo, lastSaveTime, isOnline, isAdmin,
+      setActiveUser, signOut, setViewingUser, addUser, updateUser, deleteUser,
+      updateStickerState, cycleStickerState, updateStickerCount,
+      markAllSection, clearSection, getUserAlbum,
+      executeTrade, proposeTrade, acceptTrade, rejectTrade, completeTrade,
+      pushNotification, markNotifRead, markAllNotifsRead,
+      getStats, undo,
     }}>
       {children}
     </UserContext.Provider>
