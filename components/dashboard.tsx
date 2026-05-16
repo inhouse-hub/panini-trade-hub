@@ -294,7 +294,7 @@ export function Dashboard() {
 
       {/* ═══ Stats grid (4 cards) ═══ */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard icon={Check} label="Tiene" value={stats.has} pct={(stats.has / totalStickers) * 100} color="has" />
+        <StatCard icon={Check} label="Tiene" value={stats.has + stats.repeated} pct={((stats.has + stats.repeated) / totalStickers) * 100} color="has" />
         <StatCard icon={RefreshCw} label="Repetidas" value={stats.repeated} sub={`${stats.repeatedCount} copias`} color="repeated" />
         <StatCard icon={X} label="Faltan" value={stats.missing} pct={(stats.missing / totalStickers) * 100} color="missing" />
         <StatCard icon={Circle} label="Sin revisar" value={stats.unmarked} pct={(stats.unmarked / totalStickers) * 100} color="muted" />
