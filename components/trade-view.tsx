@@ -1,530 +1,578 @@
+// components/trade-view.tsx — REEMPLAZA el archivo existente
 'use client'
 
 import { useState, useMemo } from 'react'
-import { ArrowRight, ArrowLeft, RefreshCw, X, Check, Clock, Share2, Copy, CheckCircle, Gift, Eye } from 'lucide-react'
+import {
+  ArrowRight, ArrowLeftRight, RefreshCw, X, Check, Clock, Send, Inbox,
+  History, Eye, Plus, Minus, Sparkles, Copy, CheckCircle, AlertCircle
+} from 'lucide-react'
 import { useUser } from '@/lib/user-context'
 import { ALBUM_SECTIONS } from '@/lib/album-data'
-import { TradeMatch } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
+type TradeTab = 'propuestas' | 'matches' | 'historial'
+
 export function TradeView() {
-  const { users, activeUser, activeUserAlbum, getUserAlbum, trades, executeTrade, completeTrade, setViewingUser } = useUser()
-  const [selectedMatch, setSelectedMatch] = useState<TradeMatch | null>(null)
-  const [showTradeModal, setShowTradeModal] = useState(false)
-  const [selectedToGive, setSelectedToGive] = useState<string[]>([])
-  const [selectedToReceive, setSelectedToReceive] = useState<string[]>([])
-  const [copiedText, setCopiedText] = useState<string | null>(null)
+  const {
+    users, activeUser, activeUserAlbum, getUserAlbum, trades,
+    proposeTrade, acceptTrade, rejectTrade, setViewingUser,
+  } = useUser()
 
-  // Calculate what the active user has repeated and what they need
-  const myRepeated = useMemo(() => {
-    if (!activeUserAlbum) return []
-    const repeated: string[] = []
+  const [tab, setTab] = useState<TradeTab>('matches')
+  const [proposing, setProposing] = useState<{ userId: string } | null>(null)
+  const [selectedGive, setSelectedGive] = useState<string[]>([])
+  const [selectedReceive, setSelectedReceive] = useState<string[]>([])
+  const [copied, setCopied] = useState(false)
+
+  // ── Mis repetidas y faltantes ─────────────────────────────
+  const { myRepeated, myMissing } = useMemo(() => {
+    const rep: string[] = []
+    const miss: string[] = []
+    if (!activeUserAlbum) return { myRepeated: rep, myMissing: miss }
     for (const section of ALBUM_SECTIONS) {
-      const sectionData = activeUserAlbum[section.code]
-      if (sectionData) {
-        for (const [num, sticker] of Object.entries(sectionData)) {
-          if (sticker.state === 'repeated' && sticker.count > 0) {
-            repeated.push(`${section.code}-${num}`)
-          }
-        }
+      const data = activeUserAlbum[section.code]
+      if (!data) continue
+      for (const num in data) {
+        const code = `${section.code}-${num}`
+        if (data[num].state === 'repeated' && data[num].count > 0) rep.push(code)
+        if (data[num].state === 'missing') miss.push(code)
       }
     }
-    return repeated
+    return { myRepeated: rep, myMissing: miss }
   }, [activeUserAlbum])
 
-  const myMissing = useMemo(() => {
-    if (!activeUserAlbum) return []
-    const missing: string[] = []
-    for (const section of ALBUM_SECTIONS) {
-      const sectionData = activeUserAlbum[section.code]
-      if (sectionData) {
-        for (const [num, sticker] of Object.entries(sectionData)) {
-          if (sticker.state === 'missing') {
-            missing.push(`${section.code}-${num}`)
-          }
-        }
-      }
-    }
-    return missing
-  }, [activeUserAlbum])
-
-  // Calculate what OTHER users have repeated that could help ME
-  const contributionsFromOthers = useMemo(() => {
+  // ── Matches por usuario ───────────────────────────────────
+  const matches = useMemo(() => {
     if (!activeUser) return []
-    
-    const contributions: { userId: string; userName: string; userAvatar: string; canShareToMe: string[] }[] = []
-    
+    const result: {
+      userId: string; userName: string; userAvatar: string
+      canGive: string[]; canReceive: string[]
+      matchScore: number; mutualPossible: number
+    }[] = []
+
     for (const user of users) {
       if (user.id === activeUser.id) continue
-      
       const theirAlbum = getUserAlbum(user.id)
       if (!theirAlbum) continue
-      
-      const canShareToMe: string[] = []
-      
-      // Find their repeated stickers that I need (missing)
+
+      const theirMissing = new Set<string>()
+      const theirRepeated = new Set<string>()
       for (const section of ALBUM_SECTIONS) {
-        const theirSection = theirAlbum[section.code]
-        if (theirSection) {
-          for (const [num, sticker] of Object.entries(theirSection)) {
-            if (sticker.state === 'repeated' && sticker.count > 0) {
-              const stickerCode = `${section.code}-${num}`
-              if (myMissing.includes(stickerCode)) {
-                canShareToMe.push(stickerCode)
-              }
-            }
-          }
+        const data = theirAlbum[section.code]
+        if (!data) continue
+        for (const num in data) {
+          const code = `${section.code}-${num}`
+          if (data[num].state === 'missing') theirMissing.add(code)
+          if (data[num].state === 'repeated' && data[num].count > 0) theirRepeated.add(code)
         }
       }
-      
-      if (canShareToMe.length > 0) {
-        contributions.push({
-          userId: user.id,
-          userName: user.name,
-          userAvatar: user.avatar,
-          canShareToMe,
+
+      const canGive = myRepeated.filter(s => theirMissing.has(s))
+      const canReceive = myMissing.filter(s => theirRepeated.has(s))
+      const mutualPossible = Math.min(canGive.length, canReceive.length)
+      // Score: pondera matches mutuos + tamaño total de oportunidades
+      const matchScore = mutualPossible > 0
+        ? Math.round((mutualPossible * 2 + canGive.length + canReceive.length) / (Math.max(myMissing.length, 1) + Math.max(myRepeated.length, 1)) * 100)
+        : 0
+
+      if (canGive.length > 0 || canReceive.length > 0) {
+        result.push({
+          userId: user.id, userName: user.name, userAvatar: user.avatar,
+          canGive, canReceive, matchScore, mutualPossible,
         })
       }
     }
-    
-    return contributions.sort((a, b) => b.canShareToMe.length - a.canShareToMe.length)
-  }, [activeUser, users, getUserAlbum, myMissing])
 
-  // Calculate trade matches with other users
-  const tradeMatches = useMemo(() => {
-    if (!activeUser) return []
-    
-    const matches: TradeMatch[] = []
-    
-    for (const user of users) {
-      if (user.id === activeUser.id) continue
-      
-      const theirAlbum = getUserAlbum(user.id)
-      if (!theirAlbum) continue
-      
-      const canGive: string[] = [] // What I can give them (my repeated + they need)
-      const canReceive: string[] = [] // What they can give me (their repeated + I need)
-      
-      // Check what I can give them
-      for (const sticker of myRepeated) {
-        const [sectionCode, num] = sticker.split('-')
-        const theirSticker = theirAlbum[sectionCode]?.[num]
-        if (theirSticker?.state === 'missing') {
-          canGive.push(sticker)
-        }
-      }
-      
-      // Check what they can give me
-      for (const section of ALBUM_SECTIONS) {
-        const theirSection = theirAlbum[section.code]
-        if (theirSection) {
-          for (const [num, sticker] of Object.entries(theirSection)) {
-            if (sticker.state === 'repeated' && sticker.count > 0) {
-              const stickerCode = `${section.code}-${num}`
-              if (myMissing.includes(stickerCode)) {
-                canReceive.push(stickerCode)
-              }
-            }
-          }
-        }
-      }
-      
-      const totalPossible = Math.min(canGive.length, canReceive.length)
-      const matchScore = totalPossible > 0 ? 
-        Math.round((totalPossible / Math.max(myMissing.length, 1)) * 100) : 0
-      
-      matches.push({
-        userId: user.id,
-        userName: user.name,
-        userAvatar: user.avatar,
-        canGive,
-        canReceive,
-        matchScore,
-      })
-    }
-    
-    return matches.sort((a, b) => b.matchScore - a.matchScore)
+    return result.sort((a, b) => b.matchScore - a.matchScore)
   }, [activeUser, users, getUserAlbum, myRepeated, myMissing])
 
-  const handleOpenTrade = (match: TradeMatch) => {
-    setSelectedMatch(match)
-    setSelectedToGive([])
-    setSelectedToReceive([])
-    setShowTradeModal(true)
-  }
-
-  const handleConfirmTrade = () => {
-    if (!activeUser || !selectedMatch || selectedToGive.length === 0 || selectedToReceive.length === 0) return
-    executeTrade(activeUser.id, selectedMatch.userId, selectedToGive, selectedToReceive)
-    setShowTradeModal(false)
-    setSelectedMatch(null)
-  }
-
-  const handleCopyList = async (type: 'repeated' | 'missing' | 'trade') => {
-    let text = ''
-    if (type === 'repeated') {
-      text = `Mis repetidas:\n${myRepeated.join(', ')}`
-    } else if (type === 'missing') {
-      text = `Me faltan:\n${myMissing.join(', ')}`
-    } else {
-      text = `Tengo repetidas: ${myRepeated.join(', ')}\n\nNecesito: ${myMissing.join(', ')}`
+  // ── Propuestas filtradas ──────────────────────────────────
+  const myTrades = useMemo(() => {
+    if (!activeUser) return { received: [], sent: [], history: [] }
+    return {
+      received: trades.filter(t => t.toUserId === activeUser.id && t.status === 'pending'),
+      sent: trades.filter(t => t.fromUserId === activeUser.id && t.status === 'pending'),
+      history: trades.filter(t =>
+        (t.toUserId === activeUser.id || t.fromUserId === activeUser.id) &&
+        (t.status === 'completed' || t.status === 'rejected')
+      ),
     }
-    
-    await navigator.clipboard.writeText(text)
-    setCopiedText(type)
-    setTimeout(() => setCopiedText(null), 2000)
+  }, [trades, activeUser])
+
+  const pendingBadge = myTrades.received.length
+  const sentBadge = myTrades.sent.length
+
+  // ── Helpers ───────────────────────────────────────────────
+  const startProposal = (userId: string) => {
+    setProposing({ userId })
+    setSelectedGive([])
+    setSelectedReceive([])
   }
 
-  const formatDate = (timestamp: number) => {
-    return new Date(timestamp).toLocaleDateString('es-ES', {
-      day: 'numeric',
-      month: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
+  const cancelProposal = () => {
+    setProposing(null)
+    setSelectedGive([])
+    setSelectedReceive([])
   }
+
+  const submitProposal = () => {
+    if (!proposing || selectedGive.length === 0 || selectedReceive.length === 0) return
+    proposeTrade(proposing.userId, selectedGive, selectedReceive)
+    setProposing(null)
+    setSelectedGive([])
+    setSelectedReceive([])
+    setTab('propuestas')
+  }
+
+  const toggleGive = (s: string) => {
+    setSelectedGive(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
+  }
+  const toggleReceive = (s: string) => {
+    setSelectedReceive(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
+  }
+
+  const copyTradeList = async () => {
+    const text = `🏆 INTERCAMBIOS PANINI\n\n📤 Tengo repetidas (${myRepeated.length}):\n${myRepeated.join(', ') || 'ninguna'}\n\n📥 Me faltan (${myMissing.length}):\n${myMissing.join(', ') || 'ninguna'}`
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const formatDate = (ts: number) => {
+    const d = new Date(ts)
+    return d.toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+  }
+
+  const getUserName = (id: string) => users.find(u => u.id === id)?.name || 'Usuario'
+  const getUserAvatar = (id: string) => users.find(u => u.id === id)?.avatar || '👤'
 
   if (!activeUser) return null
 
-  return (
-    <div className="space-y-6">
-      {/* My inventory summary */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Repeated stickers */}
-        <div className="bg-card/50 backdrop-blur-sm border border-border rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-display text-lg text-cyan flex items-center gap-2">
-              <RefreshCw className="w-4 h-4" />
-              Mis Repetidas
-            </h3>
-            <button
-              onClick={() => handleCopyList('repeated')}
-              className="p-2 rounded-lg hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {copiedText === 'repeated' ? <CheckCircle className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
-            </button>
+  // ═══ Modal de propuesta ═══
+  if (proposing) {
+    const targetUser = users.find(u => u.id === proposing.userId)
+    const match = matches.find(m => m.userId === proposing.userId)
+    if (!targetUser || !match) {
+      cancelProposal()
+      return null
+    }
+
+    const canSubmit = selectedGive.length > 0 && selectedReceive.length > 0
+    const isBalanced = selectedGive.length === selectedReceive.length
+
+    return (
+      <div className="space-y-4">
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={cancelProposal}
+            className="p-2 rounded-lg hover:bg-muted transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <div className="flex-1 min-w-0">
+            <h2 className="font-display text-xl text-gold">Proponer trade</h2>
+            <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
+              con <span className="text-base">{targetUser.avatar}</span>
+              <span className="font-semibold text-foreground">{targetUser.name}</span>
+            </p>
           </div>
-          {myRepeated.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-              {myRepeated.map(sticker => (
-                <span key={sticker} className="px-2 py-0.5 bg-sticker-repeated/20 text-sticker-repeated text-xs font-mono rounded-md border border-sticker-repeated/40">
-                  {sticker}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No tienes estampas repetidas</p>
-          )}
-          <p className="mt-2 text-xs text-muted-foreground">Total: {myRepeated.length}</p>
         </div>
 
-        {/* Missing stickers */}
-        <div className="bg-card/50 backdrop-blur-sm border border-border rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-display text-lg text-sticker-missing flex items-center gap-2">
-              <X className="w-4 h-4" />
-              Me Faltan
-            </h3>
-            <button
-              onClick={() => handleCopyList('missing')}
-              className="p-2 rounded-lg hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {copiedText === 'missing' ? <CheckCircle className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
-            </button>
-          </div>
-          {myMissing.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-              {myMissing.map(sticker => (
-                <span key={sticker} className="px-2 py-0.5 bg-sticker-missing/20 text-sticker-missing text-xs font-mono rounded-md border border-sticker-missing/40">
-                  {sticker}
-                </span>
-              ))}
+        {/* Resumen propuesta */}
+        <div className="bg-gradient-to-br from-gold/10 to-cyan/10 border border-gold/30 rounded-2xl p-4">
+          <div className="grid grid-cols-2 gap-3 text-center">
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Tú das</p>
+              <p className="font-mono text-2xl font-bold text-orange-400">{selectedGive.length}</p>
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No tienes faltantes marcados</p>
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Tú recibes</p>
+              <p className="font-mono text-2xl font-bold text-green-400">{selectedReceive.length}</p>
+            </div>
+          </div>
+          {selectedGive.length > 0 && selectedReceive.length > 0 && !isBalanced && (
+            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gold/20 text-xs text-amber-400">
+              <AlertCircle className="w-3.5 h-3.5" />
+              <span>Trade desigual ({selectedGive.length} por {selectedReceive.length})</span>
+            </div>
           )}
-          <p className="mt-2 text-xs text-muted-foreground">Total: {myMissing.length}</p>
+        </div>
+
+        {/* Selector: lo que doy (mis repetidas que él necesita) */}
+        <div className="bg-card/50 border border-border rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-display text-sm text-orange-400 tracking-wider flex items-center gap-1.5">
+              <ArrowRight className="w-3.5 h-3.5" /> LO QUE TÚ LE DAS
+            </h3>
+            <span className="text-xs text-muted-foreground font-mono">{match.canGive.length} disponibles</span>
+          </div>
+          {match.canGive.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-3 text-center">No tienes repetidas que él necesite</p>
+          ) : (
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 max-h-48 overflow-y-auto">
+              {match.canGive.map(s => {
+                const isSelected = selectedGive.includes(s)
+                return (
+                  <button
+                    key={s}
+                    onClick={() => toggleGive(s)}
+                    className={cn(
+                      'px-2 py-1.5 rounded-lg text-xs font-mono border transition-all',
+                      isSelected
+                        ? 'bg-orange-500/20 border-orange-500 text-orange-400 ring-1 ring-orange-500'
+                        : 'bg-muted/40 border-border text-muted-foreground hover:border-orange-500/50'
+                    )}
+                  >
+                    {s}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Selector: lo que recibo (sus repetidas que yo necesito) */}
+        <div className="bg-card/50 border border-border rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-display text-sm text-green-400 tracking-wider flex items-center gap-1.5">
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" /> LO QUE PIDES A CAMBIO
+            </h3>
+            <span className="text-xs text-muted-foreground font-mono">{match.canReceive.length} disponibles</span>
+          </div>
+          {match.canReceive.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-3 text-center">Él no tiene repetidas que tú necesites</p>
+          ) : (
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 max-h-48 overflow-y-auto">
+              {match.canReceive.map(s => {
+                const isSelected = selectedReceive.includes(s)
+                return (
+                  <button
+                    key={s}
+                    onClick={() => toggleReceive(s)}
+                    className={cn(
+                      'px-2 py-1.5 rounded-lg text-xs font-mono border transition-all',
+                      isSelected
+                        ? 'bg-green-500/20 border-green-500 text-green-400 ring-1 ring-green-500'
+                        : 'bg-muted/40 border-border text-muted-foreground hover:border-green-500/50'
+                    )}
+                  >
+                    {s}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* CTA */}
+        <div className="sticky bottom-20 bg-background/80 backdrop-blur-md -mx-4 px-4 py-3 border-t border-border">
+          <button
+            onClick={submitProposal}
+            disabled={!canSubmit}
+            className={cn(
+              'w-full py-3 rounded-xl font-semibold transition-all flex items-center justify-center gap-2',
+              canSubmit
+                ? 'bg-gold text-background hover:bg-gold/90'
+                : 'bg-muted text-muted-foreground cursor-not-allowed'
+            )}
+          >
+            <Send className="w-4 h-4" />
+            Enviar propuesta
+          </button>
+          {canSubmit && (
+            <p className="text-xs text-muted-foreground text-center mt-2">
+              {targetUser.name} recibirá una notificación
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ═══ Vista principal ═══
+  return (
+    <div className="space-y-4">
+      {/* Tabs */}
+      <div className="bg-card/50 backdrop-blur-sm border border-border rounded-xl p-1 flex gap-1">
+        <TabBtn active={tab === 'matches'} onClick={() => setTab('matches')} icon={Sparkles} label="Matches" />
+        <TabBtn active={tab === 'propuestas'} onClick={() => setTab('propuestas')} icon={Inbox} label="Propuestas" badge={pendingBadge + sentBadge} />
+        <TabBtn active={tab === 'historial'} onClick={() => setTab('historial')} icon={History} label="Historial" />
+      </div>
+
+      {/* Resumen inventario */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-card/50 border border-sticker-repeated/30 rounded-xl p-3">
+          <div className="flex items-center gap-1.5 text-sticker-repeated mb-1">
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span className="text-xs font-semibold uppercase tracking-wider">Tengo</span>
+          </div>
+          <p className="font-mono text-2xl font-bold">{myRepeated.length}</p>
+          <p className="text-xs text-muted-foreground">para intercambiar</p>
+        </div>
+        <div className="bg-card/50 border border-sticker-missing/30 rounded-xl p-3">
+          <div className="flex items-center gap-1.5 text-sticker-missing mb-1">
+            <X className="w-3.5 h-3.5" />
+            <span className="text-xs font-semibold uppercase tracking-wider">Necesito</span>
+          </div>
+          <p className="font-mono text-2xl font-bold">{myMissing.length}</p>
+          <p className="text-xs text-muted-foreground">estampas faltantes</p>
         </div>
       </div>
 
-      {/* Share button */}
+      {/* Compartir lista */}
       <button
-        onClick={() => handleCopyList('trade')}
-        className="w-full flex items-center justify-center gap-2 py-3 bg-gold/10 hover:bg-gold/20 border border-gold/30 rounded-xl text-gold font-semibold transition-colors"
+        onClick={copyTradeList}
+        className="w-full flex items-center justify-center gap-2 py-2.5 bg-gold/10 hover:bg-gold/20 border border-gold/30 rounded-xl text-gold text-sm font-semibold transition-colors"
       >
-        {copiedText === 'trade' ? (
-          <>
-            <CheckCircle className="w-4 h-4" />
-            Lista copiada al portapapeles
-          </>
-        ) : (
-          <>
-            <Share2 className="w-4 h-4" />
-            Compartir mi lista de trade
-          </>
-        )}
+        {copied ? <><CheckCircle className="w-4 h-4" />Lista copiada</> : <><Copy className="w-4 h-4" />Copiar mi lista para WhatsApp</>}
       </button>
 
-      {/* What others can share to me */}
-      {contributionsFromOthers.length > 0 && (
-        <div>
-          <h3 className="font-display text-xl text-cyan mb-4 flex items-center gap-2">
-            <Gift className="w-5 h-5" />
-            Te pueden compartir
-          </h3>
-          <div className="space-y-3">
-            {contributionsFromOthers.map(contrib => (
-              <div key={contrib.userId} className="bg-cyan/5 backdrop-blur-sm border border-cyan/30 rounded-2xl p-4">
+      {/* ─── Tab: Matches ─── */}
+      {tab === 'matches' && (
+        <div className="space-y-3">
+          {matches.length === 0 ? (
+            <div className="text-center py-12 px-4 bg-card/30 border border-border rounded-2xl">
+              <Sparkles className="w-10 h-10 mx-auto text-muted-foreground/40 mb-3" />
+              <p className="text-sm font-semibold">Aún no hay matches</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Marca tus repetidas y faltantes, y pide a otros usuarios que hagan lo mismo
+              </p>
+            </div>
+          ) : (
+            matches.map(m => (
+              <div key={m.userId} className="bg-card/50 backdrop-blur-sm border border-border rounded-2xl p-4">
                 <div className="flex items-center gap-3 mb-3">
-                  <span className="text-2xl">{contrib.userAvatar}</span>
-                  <div className="flex-1">
-                    <h4 className="font-semibold">{contrib.userName}</h4>
-                    <p className="text-xs text-cyan">
-                      Tiene {contrib.canShareToMe.length} estampas que te faltan
-                    </p>
+                  <span className="text-3xl">{m.userAvatar}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <h4 className="font-semibold">{m.userName}</h4>
+                      <span className="font-mono text-xs text-gold font-bold">{m.matchScore}% match</span>
+                    </div>
+                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-gold to-cyan rounded-full transition-all"
+                        style={{ width: `${Math.min(m.matchScore, 100)}%` }} />
+                    </div>
                   </div>
                   <button
-                    onClick={() => setViewingUser(contrib.userId)}
-                    className="p-2 rounded-lg hover:bg-cyan/20 text-cyan transition-colors"
-                    title="Ver album"
+                    onClick={() => setViewingUser(m.userId)}
+                    className="p-2 rounded-lg hover:bg-cyan/20 text-muted-foreground hover:text-cyan transition-colors"
+                    title="Ver álbum"
                   >
                     <Eye className="w-4 h-4" />
                   </button>
                 </div>
-                
-                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                  {contrib.canShareToMe.map(sticker => (
-                    <span key={sticker} className="px-2 py-0.5 bg-cyan/20 text-cyan text-xs font-mono rounded-md border border-cyan/40">
-                      {sticker}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* Trade matches */}
-      <div>
-        <h3 className="font-display text-xl text-gold mb-4">Matches de Intercambio</h3>
-        <div className="space-y-3">
-          {tradeMatches.map(match => (
-            <div key={match.userId} className="bg-card/50 backdrop-blur-sm border border-border rounded-2xl p-4">
-              <div className="flex items-center gap-3 mb-3">
-                <span className="text-2xl">{match.userAvatar}</span>
-                <div className="flex-1">
-                  <h4 className="font-semibold">{match.userName}</h4>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-gold rounded-full"
-                        style={{ width: `${match.matchScore}%` }}
-                      />
-                    </div>
-                    <span className="text-xs text-muted-foreground font-mono">{match.matchScore}%</span>
+                <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                  <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-2">
+                    <p className="text-orange-400 font-semibold mb-0.5">Le puedes dar</p>
+                    <p className="font-mono text-lg">{m.canGive.length}</p>
+                  </div>
+                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-2">
+                    <p className="text-green-400 font-semibold mb-0.5">Te puede dar</p>
+                    <p className="font-mono text-lg">{m.canReceive.length}</p>
                   </div>
                 </div>
+
                 <button
-                  onClick={() => setViewingUser(match.userId)}
-                  className="p-2 rounded-lg hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
-                  title="Ver album"
+                  onClick={() => startProposal(m.userId)}
+                  className="w-full py-2 bg-gold text-background rounded-lg font-semibold text-sm hover:bg-gold/90 transition-colors flex items-center justify-center gap-2"
                 >
-                  <Eye className="w-4 h-4" />
+                  <ArrowLeftRight className="w-4 h-4" />
+                  Proponer trade
                 </button>
               </div>
-              
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-sticker-has text-xs mb-1 flex items-center gap-1">
-                    <ArrowRight className="w-3 h-3" /> Le puedes dar ({match.canGive.length})
-                  </p>
-                  <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                    {match.canGive.slice(0, 10).map(s => (
-                      <span key={s} className="px-1.5 py-0.5 bg-sticker-has/20 text-sticker-has text-xs font-mono rounded">
-                        {s}
-                      </span>
-                    ))}
-                    {match.canGive.length > 10 && (
-                      <span className="text-xs text-muted-foreground">+{match.canGive.length - 10} mas</span>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <p className="text-cyan text-xs mb-1 flex items-center gap-1">
-                    <ArrowLeft className="w-3 h-3" /> Te puede dar ({match.canReceive.length})
-                  </p>
-                  <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                    {match.canReceive.slice(0, 10).map(s => (
-                      <span key={s} className="px-1.5 py-0.5 bg-cyan/20 text-cyan text-xs font-mono rounded">
-                        {s}
-                      </span>
-                    ))}
-                    {match.canReceive.length > 10 && (
-                      <span className="text-xs text-muted-foreground">+{match.canReceive.length - 10} mas</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              
-              {(match.canGive.length > 0 && match.canReceive.length > 0) && (
-                <button
-                  onClick={() => handleOpenTrade(match)}
-                  className="mt-3 w-full py-2 bg-gold/10 hover:bg-gold/20 border border-gold/30 rounded-lg text-gold font-semibold text-sm transition-colors"
-                >
-                  Hacer Trade
-                </button>
-              )}
-            </div>
-          ))}
-          
-          {tradeMatches.length === 0 && (
-            <div className="text-center py-8 text-muted-foreground">
-              No hay otros usuarios para hacer trades
-            </div>
+            ))
           )}
         </div>
-      </div>
+      )}
 
-      {/* Trade history */}
-      {trades.length > 0 && (
-        <div>
-          <h3 className="font-display text-xl text-gold mb-4">Historial de Trades</h3>
-          <div className="space-y-2">
-            {trades.filter(t => t.fromUserId === activeUser.id || t.toUserId === activeUser.id).map(trade => {
-              const otherUser = users.find(u => 
-                u.id === (trade.fromUserId === activeUser.id ? trade.toUserId : trade.fromUserId)
-              )
-              const isGiver = trade.fromUserId === activeUser.id
-              
-              return (
-                <div key={trade.id} className="flex items-center gap-3 p-3 bg-card/30 border border-border rounded-xl">
-                  <span className="text-xl">{otherUser?.avatar || '?'}</span>
-                  <div className="flex-1 text-sm">
-                    <p>
-                      <span className="font-semibold">{isGiver ? 'Diste' : 'Recibiste'}</span>
-                      {' '}
-                      <span className="text-muted-foreground">
-                        {(isGiver ? trade.givenStickers : trade.receivedStickers).length} estampas
-                      </span>
-                      {' a/de '}
-                      <span className="font-semibold">{otherUser?.name}</span>
-                    </p>
-                    <p className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {formatDate(trade.timestamp)}
-                    </p>
+      {/* ─── Tab: Propuestas ─── */}
+      {tab === 'propuestas' && (
+        <div className="space-y-4">
+          {/* Recibidas */}
+          <div>
+            <h3 className="font-display text-sm text-gold tracking-wider mb-2 flex items-center gap-2">
+              <Inbox className="w-3.5 h-3.5" />
+              RECIBIDAS
+              {pendingBadge > 0 && <span className="px-2 py-0.5 bg-gold/20 text-gold text-xs rounded-full">{pendingBadge}</span>}
+            </h3>
+            {myTrades.received.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-4 text-center bg-card/30 border border-border rounded-xl">
+                Sin propuestas pendientes
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {myTrades.received.map(t => (
+                  <div key={t.id} className="bg-gold/5 border border-gold/30 rounded-xl p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-2xl">{getUserAvatar(t.fromUserId)}</span>
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold">{getUserName(t.fromUserId)}</p>
+                        <p className="text-xs text-muted-foreground">{formatDate(t.timestamp)}</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                      <div>
+                        <p className="text-orange-400 mb-1 font-semibold">Te ofrece:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {t.givenStickers.map(s => (
+                            <span key={s} className="px-1.5 py-0.5 bg-orange-500/15 text-orange-400 font-mono rounded">{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-green-400 mb-1 font-semibold">Pide:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {t.receivedStickers.map(s => (
+                            <span key={s} className="px-1.5 py-0.5 bg-green-500/15 text-green-400 font-mono rounded">{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => acceptTrade(t.id)}
+                        className="flex-1 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-semibold text-sm transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <Check className="w-4 h-4" />
+                        Aceptar
+                      </button>
+                      <button
+                        onClick={() => { if (confirm('¿Rechazar este trade?')) rejectTrade(t.id) }}
+                        className="flex-1 py-2 bg-muted hover:bg-muted/70 text-foreground rounded-lg font-semibold text-sm transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <X className="w-4 h-4" />
+                        Rechazar
+                      </button>
+                    </div>
                   </div>
-                  {!trade.completed ? (
-                    <button
-                      onClick={() => completeTrade(trade.id)}
-                      className="px-3 py-1 bg-success/20 text-success text-xs font-semibold rounded-lg hover:bg-success/30 transition-colors"
-                    >
-                      Completar
-                    </button>
-                  ) : (
-                    <span className="px-3 py-1 bg-muted text-muted-foreground text-xs rounded-lg">
-                      Completado
-                    </span>
-                  )}
-                </div>
-              )
-            })}
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Enviadas */}
+          <div>
+            <h3 className="font-display text-sm text-cyan tracking-wider mb-2 flex items-center gap-2">
+              <Send className="w-3.5 h-3.5" />
+              ENVIADAS
+              {sentBadge > 0 && <span className="px-2 py-0.5 bg-cyan/20 text-cyan text-xs rounded-full">{sentBadge}</span>}
+            </h3>
+            {myTrades.sent.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-4 text-center bg-card/30 border border-border rounded-xl">
+                No has enviado propuestas
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {myTrades.sent.map(t => (
+                  <div key={t.id} className="bg-card/50 border border-border rounded-xl p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-2xl">{getUserAvatar(t.toUserId)}</span>
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold">Para {getUserName(t.toUserId)}</p>
+                        <p className="text-xs text-amber-400 flex items-center gap-1">
+                          <Clock className="w-3 h-3" /> Esperando respuesta
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <p className="text-orange-400 mb-1 font-semibold">Le das:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {t.givenStickers.map(s => (
+                            <span key={s} className="px-1.5 py-0.5 bg-orange-500/15 text-orange-400 font-mono rounded">{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-green-400 mb-1 font-semibold">Pides:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {t.receivedStickers.map(s => (
+                            <span key={s} className="px-1.5 py-0.5 bg-green-500/15 text-green-400 font-mono rounded">{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* Trade modal */}
-      {showTradeModal && selectedMatch && (
-        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="p-4 border-b border-border flex items-center justify-between">
-              <h3 className="font-display text-xl text-gold">Trade con {selectedMatch.userName}</h3>
-              <button
-                onClick={() => setShowTradeModal(false)}
-                className="p-2 rounded-lg hover:bg-muted/50"
-              >
-                <X className="w-5 h-5" />
-              </button>
+      {/* ─── Tab: Historial ─── */}
+      {tab === 'historial' && (
+        <div className="space-y-2">
+          {myTrades.history.length === 0 ? (
+            <div className="text-center py-12 px-4 bg-card/30 border border-border rounded-2xl">
+              <History className="w-10 h-10 mx-auto text-muted-foreground/40 mb-3" />
+              <p className="text-sm">Sin trades completados aún</p>
             </div>
-            
-            <div className="p-4 space-y-4">
-              {/* Select stickers to give */}
-              <div>
-                <p className="text-sm font-semibold mb-2 text-sticker-has">
-                  Selecciona lo que vas a dar ({selectedToGive.length} seleccionadas)
-                </p>
-                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 bg-muted/30 rounded-lg">
-                  {selectedMatch.canGive.map(sticker => (
-                    <button
-                      key={sticker}
-                      onClick={() => {
-                        setSelectedToGive(prev => 
-                          prev.includes(sticker) 
-                            ? prev.filter(s => s !== sticker)
-                            : [...prev, sticker]
-                        )
-                      }}
-                      className={cn(
-                        'px-2 py-1 text-xs font-mono rounded-md border transition-colors',
-                        selectedToGive.includes(sticker)
-                          ? 'bg-sticker-has/30 text-sticker-has border-sticker-has'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:border-sticker-has/50'
-                      )}
-                    >
-                      {sticker}
-                    </button>
-                  ))}
+          ) : (
+            myTrades.history.map(t => {
+              const isMe = t.fromUserId === activeUser.id
+              const otherUserId = isMe ? t.toUserId : t.fromUserId
+              return (
+                <div key={t.id} className={cn(
+                  'border rounded-xl p-3',
+                  t.status === 'completed' ? 'bg-green-500/5 border-green-500/20' : 'bg-red-500/5 border-red-500/20'
+                )}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xl">{getUserAvatar(otherUserId)}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold truncate">
+                        {isMe ? `Tú → ${getUserName(otherUserId)}` : `${getUserName(otherUserId)} → Tú`}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{formatDate(t.timestamp)}</p>
+                    </div>
+                    <span className={cn(
+                      'text-xs font-semibold px-2 py-0.5 rounded-full',
+                      t.status === 'completed' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                    )}>
+                      {t.status === 'completed' ? '✓ Hecho' : '✗ Rechazado'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="text-muted-foreground">
+                      <span className="text-orange-400">Dio:</span> {t.givenStickers.length}
+                    </div>
+                    <div className="text-muted-foreground">
+                      <span className="text-green-400">Recibió:</span> {t.receivedStickers.length}
+                    </div>
+                  </div>
                 </div>
-              </div>
-
-              {/* Select stickers to receive */}
-              <div>
-                <p className="text-sm font-semibold mb-2 text-cyan">
-                  Selecciona lo que vas a recibir ({selectedToReceive.length} seleccionadas)
-                </p>
-                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 bg-muted/30 rounded-lg">
-                  {selectedMatch.canReceive.map(sticker => (
-                    <button
-                      key={sticker}
-                      onClick={() => {
-                        setSelectedToReceive(prev => 
-                          prev.includes(sticker) 
-                            ? prev.filter(s => s !== sticker)
-                            : [...prev, sticker]
-                        )
-                      }}
-                      className={cn(
-                        'px-2 py-1 text-xs font-mono rounded-md border transition-colors',
-                        selectedToReceive.includes(sticker)
-                          ? 'bg-cyan/30 text-cyan border-cyan'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:border-cyan/50'
-                      )}
-                    >
-                      {sticker}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Confirm */}
-              <button
-                onClick={handleConfirmTrade}
-                disabled={selectedToGive.length === 0 || selectedToReceive.length === 0}
-                className={cn(
-                  'w-full py-3 rounded-xl font-semibold transition-colors',
-                  selectedToGive.length > 0 && selectedToReceive.length > 0
-                    ? 'bg-gold text-background hover:bg-gold/90'
-                    : 'bg-muted text-muted-foreground cursor-not-allowed'
-                )}
-              >
-                <Check className="w-4 h-4 inline mr-2" />
-                Confirmar Trade
-              </button>
-            </div>
-          </div>
+              )
+            })
+          )}
         </div>
       )}
     </div>
+  )
+}
+
+function TabBtn({
+  active, onClick, icon: Icon, label, badge,
+}: { active: boolean; onClick: () => void; icon: typeof Inbox; label: string; badge?: number }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'relative flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all',
+        active ? 'bg-gold text-background' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+      )}
+    >
+      <Icon className="w-3.5 h-3.5" />
+      <span>{label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className={cn(
+          'min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold flex items-center justify-center',
+          active ? 'bg-background text-gold' : 'bg-sticker-missing text-white'
+        )}>
+          {badge}
+        </span>
+      )}
+    </button>
   )
 }
