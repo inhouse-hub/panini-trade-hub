@@ -1,15 +1,16 @@
-// components/chat-view.tsx — NUEVO
+// components/chat-view.tsx — REEMPLAZA el archivo existente
 'use client'
 
 import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Send, Smile, Image as ImageIcon, ArrowLeft, MoreVertical, Trash2,
-  Users as UsersIcon, MessageSquare, Check, CheckCheck, X
+  Users as UsersIcon, MessageSquare, Check, CheckCheck, X, Loader2
 } from 'lucide-react'
 import { useUser } from '@/lib/user-context'
 import { ALBUM_SECTIONS } from '@/lib/album-data'
 import { Message } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { Avatar } from './avatar'
 
 const EMOJI_LIST = [
   '😀', '😂', '🤣', '😊', '😍', '🥰', '😎', '🤔', '😏', '😅',
@@ -27,7 +28,7 @@ export function ChatView() {
     activeUser, users, chats, messagesByChat, chatReads,
     loadChatMessages, sendMessage, deleteMessage, markChatRead,
     setTyping, clearTyping, getOrCreateDM, unreadCountForChat,
-    activeUserAlbum,
+    activeUserAlbum, uploadChatImage,
   } = useUser()
 
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
@@ -35,8 +36,11 @@ export function ChatView() {
   const [showEmojis, setShowEmojis] = useState(false)
   const [showNewDM, setShowNewDM] = useState(false)
   const [menuMsgId, setMenuMsgId] = useState<string | null>(null)
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const [previewImage, setPreviewImage] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const selectedChat = chats.find(c => c.id === selectedChatId)
@@ -123,6 +127,41 @@ export function ChatView() {
     inputRef.current?.focus()
   }
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !selectedChatId) return
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Imagen muy grande. Máximo 5 MB.')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => setPreviewImage(reader.result as string)
+    reader.readAsDataURL(file)
+  }
+
+  const handleSendImage = async () => {
+    if (!selectedChatId || !previewImage) return
+    setUploadingImage(true)
+    try {
+      // Convert dataURL to Blob
+      const response = await fetch(previewImage)
+      const blob = await response.blob()
+      const url = await uploadChatImage(selectedChatId, blob)
+      if (url) {
+        await sendMessage(selectedChatId, '📷 Imagen', url)
+      } else {
+        alert('Error al subir la imagen. ¿Activaste el bucket "chat-images" en Supabase Storage?')
+      }
+    } catch (e) {
+      console.error(e)
+      alert('Error al subir la imagen')
+    } finally {
+      setUploadingImage(false)
+      setPreviewImage(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
   const getOtherParticipant = (chat: typeof chats[0]) => {
     if (chat.type !== 'dm') return null
     const otherId = chat.participants.find(p => p !== activeUser.id)
@@ -131,12 +170,12 @@ export function ChatView() {
 
   const getChatDisplay = (chat: typeof chats[0]) => {
     if (chat.type === 'group') {
-      return { name: chat.name || 'Grupo', avatar: '👥', subtitle: `${chat.participants.length} miembros` }
+      return { name: chat.name || 'Grupo', avatarNode: <span className="text-2xl">👥</span>, subtitle: `${chat.participants.length} miembros` }
     }
     const other = getOtherParticipant(chat)
     return {
       name: other?.name || 'Usuario',
-      avatar: other?.avatar || '👤',
+      avatarNode: other ? <Avatar user={other} size="lg" /> : <span className="text-2xl">👤</span>,
       subtitle: other?.isAdmin ? 'Admin 👑' : 'Chat directo',
     }
   }
@@ -231,10 +270,10 @@ export function ChatView() {
                 >
                   <div className="relative shrink-0">
                     <div className={cn(
-                      'w-12 h-12 rounded-full flex items-center justify-center text-2xl',
+                      'w-12 h-12 rounded-full flex items-center justify-center overflow-hidden',
                       isGroup ? 'bg-cyan/15' : 'bg-muted/40'
                     )}>
-                      {display.avatar}
+                      {display.avatarNode}
                     </div>
                     {isGroup && (
                       <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-cyan/30 border-2 border-background flex items-center justify-center">
@@ -299,7 +338,7 @@ export function ChatView() {
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <div className="text-2xl">{display.avatar}</div>
+        <div>{display.avatarNode}</div>
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-sm truncate">{display.name}</p>
           <p className="text-xs text-muted-foreground truncate">{display.subtitle}</p>
@@ -329,9 +368,9 @@ export function ChatView() {
                 className={cn('flex', isMe ? 'justify-end' : 'justify-start')}
               >
                 <div className={cn('max-w-[80%] group relative', isMe ? 'items-end' : 'items-start')}>
-                  {showSenderName && (
-                    <p className="text-xs text-cyan font-semibold mb-0.5 ml-2">
-                      {sender?.avatar} {sender?.name}
+                  {showSenderName && sender && (
+                    <p className="text-xs text-cyan font-semibold mb-0.5 ml-2 flex items-center gap-1">
+                      <Avatar user={sender} size="xs" /> {sender.name}
                     </p>
                   )}
                   <div
@@ -348,7 +387,19 @@ export function ChatView() {
                       isMe && !msg.deleted && 'cursor-pointer'
                     )}
                   >
-                    <MessageContent text={msg.text} myAlbum={activeUserAlbum} isMe={isMe} />
+                    {msg.imageUrl && !msg.deleted && (
+                      <a href={msg.imageUrl} target="_blank" rel="noopener" className="block mb-1 -mt-1 -mx-1">
+                        <img
+                          src={msg.imageUrl}
+                          alt="Imagen"
+                          className="max-w-[260px] max-h-[260px] rounded-lg object-cover"
+                          onClick={e => e.stopPropagation()}
+                        />
+                      </a>
+                    )}
+                    {msg.text !== '📷 Imagen' || msg.deleted ? (
+                      <MessageContent text={msg.text} myAlbum={activeUserAlbum} isMe={isMe} />
+                    ) : null}
                     <p className={cn(
                       'text-[10px] mt-1',
                       isMe ? 'text-background/70' : 'text-muted-foreground'
@@ -411,14 +462,21 @@ export function ChatView() {
           >
             <Smile className="w-5 h-5" />
           </button>
-          {/* Botón de imagen (deshabilitado por ahora) */}
           <button
-            disabled
-            className="p-2 rounded-lg text-muted-foreground/40 cursor-not-allowed"
-            title="Adjuntar imagen (próximamente)"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadingImage}
+            className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            title="Adjuntar imagen"
           >
-            <ImageIcon className="w-5 h-5" />
+            {uploadingImage ? <Loader2 className="w-5 h-5 animate-spin" /> : <ImageIcon className="w-5 h-5" />}
           </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleImageSelect}
+            className="hidden"
+          />
           <input
             ref={inputRef}
             type="text"
@@ -447,6 +505,48 @@ export function ChatView() {
           </button>
         </div>
       </div>
+
+      {/* Preview de imagen antes de enviar */}
+      {previewImage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/90 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-2xl p-4 w-full max-w-md">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-display text-lg text-gold">Enviar imagen</h3>
+              <button
+                onClick={() => setPreviewImage(null)}
+                className="p-1 hover:bg-muted rounded-lg"
+                disabled={uploadingImage}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="rounded-xl overflow-hidden mb-3 bg-muted/40">
+              <img src={previewImage} alt="Preview" className="w-full max-h-[400px] object-contain" />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPreviewImage(null)}
+                disabled={uploadingImage}
+                className="px-4 py-2.5 bg-muted hover:bg-muted/70 rounded-xl text-sm transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSendImage}
+                disabled={uploadingImage}
+                className={cn(
+                  'flex-1 py-2.5 rounded-xl font-semibold text-sm transition-colors flex items-center justify-center gap-1.5',
+                  uploadingImage
+                    ? 'bg-muted text-muted-foreground cursor-wait'
+                    : 'bg-gold text-background hover:bg-gold/90'
+                )}
+              >
+                {uploadingImage ? <><Loader2 className="w-4 h-4 animate-spin" /> Enviando...</> : <><Send className="w-4 h-4" /> Enviar</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

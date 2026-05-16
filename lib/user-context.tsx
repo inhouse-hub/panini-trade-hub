@@ -14,7 +14,9 @@ import {
   fetchMessages, sendMessageRemote, deleteMessageRemote,
   fetchChatReads, markChatReadRemote,
   setTypingRemote, clearTypingRemote,
-  subscribeToMessages, subscribeToChats,
+  subscribeToMessages, subscribeToChats, subscribeToUsers,
+  uploadAvatar as uploadAvatarRemote,
+  uploadChatImage as uploadChatImageRemote,
 } from './supabase'
 
 const STORAGE_KEYS = {
@@ -74,6 +76,8 @@ interface UserContextType {
   clearTyping: (chatId: string) => void
   getOrCreateDM: (otherUserId: string) => Promise<string>
   unreadCountForChat: (chatId: string) => number
+  uploadAvatar: (userId: string, blob: Blob) => Promise<string | null>
+  uploadChatImage: (chatId: string, blob: Blob) => Promise<string | null>
   getStats: (userId: string) => { total: number; has: number; missing: number; repeated: number; unmarked: number; repeatedCount: number }
   undo: () => void
 }
@@ -569,6 +573,27 @@ export function UserProvider({ children }: { children: ReactNode }) {
     if (isOnline) clearTypingRemote(chatId, activeUserId)
   }, [activeUserId, isOnline])
 
+  // ── Avatar / chat image uploads ───────────────────────────
+  const uploadAvatar = useCallback(async (userId: string, blob: Blob): Promise<string | null> => {
+    if (!isOnline) return null
+    const url = await uploadAvatarRemote(userId, blob)
+    if (url) {
+      // Update user's avatarUrl in state + remote
+      setUsers(prev => prev.map(u => {
+        if (u.id !== userId) return u
+        const updated: User = { ...u, avatarUrl: url }
+        upsertUser(updated)
+        return updated
+      }))
+    }
+    return url
+  }, [isOnline])
+
+  const uploadChatImage = useCallback(async (chatId: string, blob: Blob): Promise<string | null> => {
+    if (!isOnline) return null
+    return await uploadChatImageRemote(chatId, blob)
+  }, [isOnline])
+
   // ── Stats ─────────────────────────────────────────────────
   const getStats = useCallback((userId: string) => {
     const album = albums[userId]
@@ -620,6 +645,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
       pushNotification, markNotifRead, markAllNotifsRead,
       loadChatMessages, sendMessage, deleteMessage, markChatRead,
       setTyping, clearTyping, getOrCreateDM, unreadCountForChat,
+      uploadAvatar, uploadChatImage,
       getStats, undo,
     }}>
       {children}

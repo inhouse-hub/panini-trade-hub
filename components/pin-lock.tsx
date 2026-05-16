@@ -1,5 +1,4 @@
-// components/pin-lock.tsx — NUEVO archivo
-// Pantalla de bloqueo con selector de usuario y PIN
+// components/pin-lock.tsx — REEMPLAZA el archivo existente
 
 'use client'
 
@@ -7,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { useUser } from '@/lib/user-context'
 import { Trophy, Lock, Delete } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Avatar } from './avatar'
 
 interface PinLockProps {
   onUnlock: (userId: string) => void
@@ -21,11 +21,9 @@ export function PinLock({ onUnlock }: PinLockProps) {
 
   const selectedUser = users.find(u => u.id === selectedUserId)
 
-  // Auto-submit cuando el PIN llega a 4 dígitos
   useEffect(() => {
     if (pin.length === 4 && selectedUser) {
       if (pin === selectedUser.pin) {
-        // Pequeño delay para feedback visual antes de entrar
         setTimeout(() => onUnlock(selectedUser.id), 200)
       } else {
         setError(true)
@@ -58,120 +56,84 @@ export function PinLock({ onUnlock }: PinLockProps) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center px-6 py-12">
         <div className="flex items-center gap-3 mb-12">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-yellow-400 to-yellow-600 flex items-center justify-center">
-            <Trophy className="w-6 h-6 text-zinc-900" />
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-gold to-gold-dim flex items-center justify-center">
+            <span className="text-background text-3xl">⚽</span>
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Panini Trade Hub</h1>
-            <p className="text-xs text-zinc-400 uppercase tracking-widest">Mundial 2026</p>
+            <h1 className="font-display text-3xl tracking-wide text-gold">PANINI TRADE HUB</h1>
+            <p className="text-xs text-muted-foreground">Mundial 2026</p>
           </div>
         </div>
 
-        <h2 className="text-zinc-400 text-sm uppercase tracking-widest mb-6">¿Quién entra?</h2>
+        <p className="text-sm text-muted-foreground mb-6">¿Quién entra?</p>
 
-        <div className="w-full max-w-sm space-y-3">
+        <div className="grid grid-cols-2 gap-3 w-full max-w-md">
           {users.map(user => (
             <button
               key={user.id}
               onClick={() => setSelectedUserId(user.id)}
-              className="w-full flex items-center gap-4 p-4 rounded-2xl bg-zinc-900/50 border border-zinc-800 hover:border-yellow-500/50 hover:bg-zinc-900 transition-all group"
+              className="flex flex-col items-center gap-3 p-6 bg-card/50 backdrop-blur-sm border border-border hover:border-gold/50 hover:bg-card rounded-2xl transition-all group"
             >
-              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-zinc-700 to-zinc-800 flex items-center justify-center text-2xl">
-                {user.avatar}
+              <Avatar user={user} size="2xl" />
+              <div className="text-center">
+                <p className="font-semibold text-sm group-hover:text-gold transition-colors">{user.name}</p>
+                {user.isAdmin && (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-gold mt-1">
+                    👑 Admin
+                  </span>
+                )}
               </div>
-              <div className="flex-1 text-left">
-                <div className="font-semibold text-lg">{user.name}</div>
-                <div className="text-xs text-zinc-500 flex items-center gap-1">
-                  <Lock className="w-3 h-3" />
-                  PIN requerido
-                </div>
-              </div>
-              <div className="text-zinc-600 group-hover:text-yellow-500 transition-colors">→</div>
             </button>
           ))}
         </div>
-
-        <p className="text-xs text-zinc-600 mt-8 text-center max-w-sm">
-          PIN inicial para todos: <span className="font-mono text-zinc-400">1234</span><br />
-          Puedes cambiarlo después en Usuarios.
-        </p>
       </div>
     )
   }
 
-  // ── Pantalla 2: Ingreso de PIN ────────────────────────────
+  // ── Pantalla 2: PIN ───────────────────────────────────────
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-6 py-12">
-      <button
-        onClick={handleBack}
-        className="text-zinc-500 hover:text-zinc-300 text-sm mb-8"
-      >
-        ← Cambiar usuario
+      <button onClick={handleBack}
+        className="absolute top-6 left-6 text-sm text-muted-foreground hover:text-foreground transition-colors">
+        ← Atrás
       </button>
 
-      <div className={cn(
-        "flex flex-col items-center gap-3 mb-10 transition-transform",
-        shake && "animate-[shake_0.6s_ease-in-out]"
-      )}>
-        <div className="w-20 h-20 rounded-full bg-gradient-to-br from-zinc-700 to-zinc-800 flex items-center justify-center text-4xl">
-          {selectedUser?.avatar}
-        </div>
-        <h2 className="text-2xl font-bold">{selectedUser?.name}</h2>
-        <p className="text-xs text-zinc-500 uppercase tracking-widest">Ingresa tu PIN</p>
+      <div className="flex flex-col items-center mb-8">
+        <Avatar user={selectedUser!} size="2xl" className="mb-4" />
+        <h2 className="font-display text-2xl text-gold">{selectedUser?.name}</h2>
+        <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+          <Lock className="w-3 h-3" /> Ingresa tu PIN
+        </p>
       </div>
 
       {/* PIN dots */}
-      <div className="flex gap-4 mb-10">
+      <div className={cn('flex gap-3 mb-12 transition-transform', shake && 'animate-shake')}>
         {[0, 1, 2, 3].map(i => (
-          <div
-            key={i}
-            className={cn(
-              "w-4 h-4 rounded-full border-2 transition-all",
-              error
-                ? "border-red-500 bg-red-500"
-                : pin.length > i
-                ? "border-yellow-500 bg-yellow-500 scale-110"
-                : "border-zinc-700"
-            )}
-          />
+          <div key={i} className={cn(
+            'w-4 h-4 rounded-full transition-all',
+            error ? 'bg-sticker-missing' : pin.length > i ? 'bg-gold' : 'bg-muted'
+          )} />
         ))}
       </div>
 
-      {/* Number pad */}
-      <div className="grid grid-cols-3 gap-3 w-full max-w-[280px]">
+      {/* Numpad */}
+      <div className="grid grid-cols-3 gap-3 w-full max-w-xs">
         {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
-          <button
-            key={n}
-            onClick={() => handleDigit(n.toString())}
-            className="aspect-square rounded-2xl bg-zinc-900/70 border border-zinc-800 text-2xl font-light hover:bg-zinc-800 hover:border-zinc-700 active:scale-95 transition-all"
-          >
+          <button key={n} onClick={() => handleDigit(n.toString())}
+            className="aspect-square bg-card/50 backdrop-blur-sm border border-border hover:border-gold/50 hover:bg-card rounded-xl text-2xl font-display tracking-wider transition-all active:scale-95">
             {n}
           </button>
         ))}
         <div />
-        <button
-          onClick={() => handleDigit('0')}
-          className="aspect-square rounded-2xl bg-zinc-900/70 border border-zinc-800 text-2xl font-light hover:bg-zinc-800 hover:border-zinc-700 active:scale-95 transition-all"
-        >
+        <button onClick={() => handleDigit('0')}
+          className="aspect-square bg-card/50 backdrop-blur-sm border border-border hover:border-gold/50 hover:bg-card rounded-xl text-2xl font-display tracking-wider transition-all active:scale-95">
           0
         </button>
-        <button
-          onClick={handleDelete}
-          className="aspect-square rounded-2xl flex items-center justify-center text-zinc-500 hover:text-zinc-300 active:scale-95 transition-all"
-        >
-          <Delete className="w-6 h-6" />
+        <button onClick={handleDelete}
+          className="aspect-square bg-card/50 backdrop-blur-sm border border-border hover:border-danger/50 hover:bg-card rounded-xl flex items-center justify-center transition-all active:scale-95">
+          <Delete className="w-5 h-5" />
         </button>
       </div>
-
-      <style jsx>{`
-        @keyframes shake {
-          0%, 100% { transform: translateX(0); }
-          20% { transform: translateX(-10px); }
-          40% { transform: translateX(10px); }
-          60% { transform: translateX(-6px); }
-          80% { transform: translateX(6px); }
-        }
-      `}</style>
     </div>
   )
 }

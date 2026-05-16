@@ -2,16 +2,20 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Edit2, Trash2, Check, Eye, Key, ShieldCheck, Lock, X } from 'lucide-react'
+import { Plus, Edit2, Trash2, Check, Eye, Key, ShieldCheck, Lock, X, Camera, Link2, Copy, CheckCircle } from 'lucide-react'
 import { useUser } from '@/lib/user-context'
 import { AVATAR_OPTIONS } from '@/lib/album-data'
 import { cn } from '@/lib/utils'
+import { Avatar } from './avatar'
+import { AvatarUploadModal } from './avatar-upload-modal'
 
 export function UsersView() {
-  const { users, activeUser, isAdmin, setActiveUser, addUser, updateUser, deleteUser, getStats, setViewingUser } = useUser()
+  const { users, activeUser, isAdmin, setActiveUser, addUser, updateUser, deleteUser, getStats, setViewingUser, uploadAvatar } = useUser()
   const [isAddingUser, setIsAddingUser] = useState(false)
   const [editingUserId, setEditingUserId] = useState<string | null>(null)
   const [pinChangeUserId, setPinChangeUserId] = useState<string | null>(null)
+  const [avatarUploadUserId, setAvatarUploadUserId] = useState<string | null>(null)
+  const [copiedUserId, setCopiedUserId] = useState<string | null>(null)
 
   // Form state
   const [newName, setNewName] = useState('')
@@ -37,8 +41,6 @@ export function UsersView() {
   }
 
   const handleChangePin = (user: typeof users[0]) => {
-    // Admin can change anyone's PIN without knowing current
-    // Regular user needs to know their current PIN
     if (!isAdmin && currentPin !== user.pin) {
       setPinError('PIN actual incorrecto')
       return
@@ -50,6 +52,18 @@ export function UsersView() {
     updateUser(user.id, { pin: newPin })
     setPinChangeUserId(null)
     resetForm()
+  }
+
+  const handleAvatarUpload = async (blob: Blob) => {
+    if (!avatarUploadUserId) return
+    await uploadAvatar(avatarUploadUserId, blob)
+  }
+
+  const handleCopyLink = async (userId: string) => {
+    const url = `${window.location.origin}/p/${userId}`
+    await navigator.clipboard.writeText(url)
+    setCopiedUserId(userId)
+    setTimeout(() => setCopiedUserId(null), 2000)
   }
 
   const resetForm = () => {
@@ -73,7 +87,6 @@ export function UsersView() {
     setPinError('')
   }
 
-  // Determinar si activeUser puede editar a `user`
   const canEdit = (user: typeof users[0]) => {
     if (!activeUser) return false
     if (isAdmin) return true
@@ -83,7 +96,7 @@ export function UsersView() {
   const canDelete = (user: typeof users[0]) => {
     if (!activeUser || users.length <= 1) return false
     if (!isAdmin) return false
-    if (user.isAdmin) return false // Don't allow deleting admins
+    if (user.isAdmin) return false
     return true
   }
 
@@ -110,7 +123,6 @@ export function UsersView() {
         )}
       </div>
 
-      {/* Add user form (admin only) */}
       {isAddingUser && isAdmin && (
         <div className="bg-card/50 backdrop-blur-sm border border-gold/30 rounded-2xl p-4">
           <h3 className="font-semibold mb-4">Nuevo Usuario</h3>
@@ -119,19 +131,14 @@ export function UsersView() {
             <TextField label="Nombre" value={newName} onChange={setNewName} placeholder="Ingresa el nombre" />
             <TextField label="PIN inicial (4 dígitos)" value={newPin} onChange={setNewPin} placeholder="1234" maxLength={4} numeric />
             <div className="flex gap-2">
-              <button
-                onClick={handleAddUser}
-                disabled={!newName.trim()}
+              <button onClick={handleAddUser} disabled={!newName.trim()}
                 className={cn('flex-1 py-2.5 rounded-xl font-semibold transition-colors',
-                  newName.trim() ? 'bg-gold text-background hover:bg-gold/90' : 'bg-muted text-muted-foreground cursor-not-allowed')}
-              >
+                  newName.trim() ? 'bg-gold text-background hover:bg-gold/90' : 'bg-muted text-muted-foreground cursor-not-allowed')}>
                 <Check className="w-4 h-4 inline mr-2" />
                 Crear
               </button>
-              <button
-                onClick={() => { setIsAddingUser(false); resetForm() }}
-                className="px-4 py-2.5 bg-muted hover:bg-muted/80 rounded-xl transition-colors"
-              >
+              <button onClick={() => { setIsAddingUser(false); resetForm() }}
+                className="px-4 py-2.5 bg-muted hover:bg-muted/80 rounded-xl transition-colors">
                 Cancelar
               </button>
             </div>
@@ -139,7 +146,6 @@ export function UsersView() {
         </div>
       )}
 
-      {/* User list */}
       <div className="space-y-3">
         {users.map(user => {
           const stats = getStats(user.id)
@@ -153,7 +159,20 @@ export function UsersView() {
               <div key={user.id} className="bg-card/50 backdrop-blur-sm border border-gold/30 rounded-2xl p-4">
                 <h3 className="font-semibold mb-4">Editar perfil</h3>
                 <div className="space-y-4">
-                  <AvatarPicker value={newAvatar} onChange={setNewAvatar} />
+                  <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-xl">
+                    <Avatar user={user} size="xl" />
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold mb-1">Foto actual</p>
+                      <button
+                        onClick={() => setAvatarUploadUserId(user.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gold/10 hover:bg-gold/20 border border-gold/30 rounded-lg text-gold text-xs font-semibold transition-colors"
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                        {user.avatarUrl ? 'Cambiar foto' : 'Subir foto'}
+                      </button>
+                    </div>
+                  </div>
+                  <AvatarPicker value={newAvatar} onChange={setNewAvatar} label="O elige un emoji" />
                   <TextField label="Nombre" value={newName} onChange={setNewName} />
                   <div className="flex gap-2">
                     <button onClick={() => handleUpdateUser(user.id)}
@@ -178,7 +197,6 @@ export function UsersView() {
                   {isAdmin && !isActiveUser ? `Cambiar PIN de ${user.name}` : 'Cambiar mi PIN'}
                 </h3>
                 <div className="space-y-4">
-                  {/* Solo pide PIN actual si NO es admin O si es su propio PIN */}
                   {(!isAdmin || isActiveUser) && (
                     <TextField label="PIN actual" value={currentPin} onChange={setCurrentPin} placeholder="••••" maxLength={4} numeric password />
                   )}
@@ -205,7 +223,7 @@ export function UsersView() {
             <div key={user.id} className={cn('bg-card/50 backdrop-blur-sm border rounded-2xl p-4 transition-all',
               isActiveUser ? 'border-gold/50' : 'border-border')}>
               <div className="flex items-center gap-4">
-                <span className="text-4xl shrink-0">{user.avatar}</span>
+                <Avatar user={user} size="xl" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="font-semibold text-lg">{user.name}</h3>
@@ -233,20 +251,25 @@ export function UsersView() {
                   </div>
                 </div>
                 <div className="flex flex-col gap-1 shrink-0">
-                  {/* Activar - solo admin puede saltar a otros usuarios sin PIN */}
                   {!isActiveUser && isAdmin && (
                     <button onClick={() => setActiveUser(user.id)}
                       className="px-2.5 py-1 bg-gold/10 hover:bg-gold/20 text-gold text-xs font-semibold rounded-lg transition-colors">
                       Cambiar a
                     </button>
                   )}
-                  {/* Ver álbum (todos pueden ver de cualquiera) */}
                   <button onClick={() => setViewingUser(user.id)}
                     className="p-2 rounded-lg hover:bg-cyan/20 text-muted-foreground hover:text-cyan transition-colors"
                     title="Ver álbum">
                     <Eye className="w-4 h-4" />
                   </button>
-                  {/* Editar perfil (admin o uno mismo) */}
+                  <button onClick={() => handleCopyLink(user.id)}
+                    className={cn('p-2 rounded-lg transition-colors',
+                      copiedUserId === user.id
+                        ? 'bg-success/20 text-success'
+                        : 'hover:bg-cyan/20 text-muted-foreground hover:text-cyan')}
+                    title="Copiar link público">
+                    {copiedUserId === user.id ? <CheckCircle className="w-4 h-4" /> : <Link2 className="w-4 h-4" />}
+                  </button>
                   {canEdit(user) && (
                     <button onClick={() => startEditing(user)}
                       className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
@@ -254,7 +277,6 @@ export function UsersView() {
                       <Edit2 className="w-4 h-4" />
                     </button>
                   )}
-                  {/* Cambiar PIN */}
                   {canEdit(user) && (
                     <button onClick={() => startPinChange(user)}
                       className="p-2 rounded-lg hover:bg-cyan/20 text-muted-foreground hover:text-cyan transition-colors"
@@ -262,7 +284,6 @@ export function UsersView() {
                       <Key className="w-4 h-4" />
                     </button>
                   )}
-                  {/* Eliminar (solo admin, no a otros admins) */}
                   {canDelete(user) && (
                     <button onClick={() => {
                       if (confirm(`¿Eliminar a ${user.name}? Esta acción no se puede deshacer.`)) deleteUser(user.id)
@@ -284,24 +305,27 @@ export function UsersView() {
           Solo puedes editar tu propio perfil. Para más permisos, pide a Jorge (admin) que te asigne otro rol.
         </p>
       )}
+
+      {/* Avatar upload modal */}
+      {avatarUploadUserId && (
+        <AvatarUploadModal
+          onClose={() => setAvatarUploadUserId(null)}
+          onUpload={handleAvatarUpload}
+        />
+      )}
     </div>
   )
 }
 
-// ─── Subcomponents ───────────────────────────────────────────
-
-function AvatarPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function AvatarPicker({ value, onChange, label }: { value: string; onChange: (v: string) => void; label?: string }) {
   return (
     <div>
-      <label className="text-sm text-muted-foreground mb-2 block">Avatar</label>
+      <label className="text-sm text-muted-foreground mb-2 block">{label || 'Avatar'}</label>
       <div className="flex flex-wrap gap-2">
         {AVATAR_OPTIONS.map(avatar => (
-          <button
-            key={avatar}
-            onClick={() => onChange(avatar)}
+          <button key={avatar} onClick={() => onChange(avatar)}
             className={cn('w-10 h-10 rounded-xl flex items-center justify-center text-xl transition-all',
-              value === avatar ? 'bg-gold/30 ring-2 ring-gold scale-110' : 'bg-muted hover:bg-muted/80')}
-          >
+              value === avatar ? 'bg-gold/30 ring-2 ring-gold scale-110' : 'bg-muted hover:bg-muted/80')}>
             {avatar}
           </button>
         ))}

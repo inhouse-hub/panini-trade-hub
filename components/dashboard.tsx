@@ -1,3 +1,4 @@
+// components/dashboard.tsx — REEMPLAZA el archivo existente
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
@@ -8,6 +9,7 @@ import {
 import { useUser } from '@/lib/user-context'
 import { ALBUM_SECTIONS, getTotalStickerCount } from '@/lib/album-data'
 import { cn } from '@/lib/utils'
+import { Avatar } from './avatar'
 
 const STREAK_KEY = 'panini_streak'
 const ACTIVITY_KEY = 'panini_activity'
@@ -155,6 +157,7 @@ export function Dashboard() {
           id: u.id,
           name: u.name,
           avatar: u.avatar,
+          avatarUrl: u.avatarUrl,
           owned,
           percent: (owned / total) * 100,
           isActive: u.id === activeUser?.id,
@@ -166,7 +169,7 @@ export function Dashboard() {
   // ── Oportunidades de trade ────────────────────────────────
   const tradeOpportunities = useMemo(() => {
     if (!activeUser || !activeUserAlbum) return []
-    const opportunities: { userId: string; userName: string; userAvatar: string; canGet: number; canGive: number }[] = []
+    const opportunities: { userId: string; userName: string; userAvatar: string; userAvatarUrl?: string; canGet: number; canGive: number }[] = []
 
     const myMissing = new Set<string>()
     const myRepeated = new Set<string>()
@@ -199,6 +202,7 @@ export function Dashboard() {
           userId: user.id,
           userName: user.name,
           userAvatar: user.avatar,
+          userAvatarUrl: user.avatarUrl,
           canGet,
           canGive,
         })
@@ -252,7 +256,15 @@ export function Dashboard() {
               </div>
             </div>
           </div>
-          <div className="text-6xl md:text-7xl opacity-20 shrink-0">{activeUser.avatar}</div>
+          <div className="opacity-30 shrink-0">
+            {activeUser.avatarUrl ? (
+              <div className="w-20 h-20 md:w-24 md:h-24 rounded-full overflow-hidden">
+                <img src={activeUser.avatarUrl} alt={activeUser.name} className="w-full h-full object-cover" />
+              </div>
+            ) : (
+              <div className="text-6xl md:text-7xl">{activeUser.avatar}</div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -403,7 +415,7 @@ export function Dashboard() {
                 )}>
                   {idx + 1}
                 </div>
-                <span className="text-xl shrink-0">{u.avatar}</span>
+                <Avatar user={u} size="md" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className={cn('text-sm font-semibold truncate', u.isActive && 'text-gold')}>
@@ -440,7 +452,7 @@ export function Dashboard() {
             <div className="space-y-2">
               {tradeOpportunities.slice(0, 3).map(op => (
                 <div key={op.userId} className="flex items-center gap-3 p-2.5 rounded-xl bg-muted/30">
-                  <span className="text-xl shrink-0">{op.userAvatar}</span>
+                  <Avatar user={{ avatar: op.userAvatar, avatarUrl: op.userAvatarUrl, name: op.userName }} size="md" />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold truncate">{op.userName}</p>
                     <div className="flex items-center gap-3 text-xs mt-0.5">

@@ -21,16 +21,17 @@ export async function fetchUsers(): Promise<User[]> {
   const { data, error } = await supabase.from('users').select('*').order('created_at')
   if (error) { console.error('fetchUsers:', error); return [] }
   return (data || []).map((u: any) => ({
-    id: u.id, name: u.name, avatar: u.avatar, pin: u.pin,
-    isAdmin: u.is_admin || false, createdAt: u.created_at,
+    id: u.id, name: u.name, avatar: u.avatar, avatarUrl: u.avatar_url || undefined,
+    pin: u.pin, isAdmin: u.is_admin || false, createdAt: u.created_at,
   }))
 }
 
 export async function upsertUser(user: User): Promise<void> {
   if (!supabase) return
   const { error } = await supabase.from('users').upsert({
-    id: user.id, name: user.name, avatar: user.avatar, pin: user.pin,
-    is_admin: user.isAdmin || false, created_at: user.createdAt,
+    id: user.id, name: user.name, avatar: user.avatar,
+    avatar_url: user.avatarUrl || null,
+    pin: user.pin, is_admin: user.isAdmin || false, created_at: user.createdAt,
   })
   if (error) console.error('upsertUser:', error)
 }
@@ -39,6 +40,40 @@ export async function deleteUserRemote(userId: string): Promise<void> {
   if (!supabase) return
   const { error } = await supabase.from('users').delete().eq('id', userId)
   if (error) console.error('deleteUser:', error)
+}
+
+// ─── Storage: Avatars ────────────────────────────────────────
+
+export async function uploadAvatar(userId: string, file: Blob): Promise<string | null> {
+  if (!supabase) return null
+  const fileName = `${userId}_${Date.now()}.jpg`
+  const { data, error } = await supabase.storage
+    .from('avatars')
+    .upload(fileName, file, {
+      contentType: 'image/jpeg',
+      cacheControl: '3600',
+      upsert: true,
+    })
+  if (error) { console.error('uploadAvatar:', error); return null }
+  const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(data.path)
+  return urlData.publicUrl
+}
+
+// ─── Storage: Chat Images ────────────────────────────────────
+
+export async function uploadChatImage(chatId: string, file: Blob): Promise<string | null> {
+  if (!supabase) return null
+  const fileName = `${chatId}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.jpg`
+  const { data, error } = await supabase.storage
+    .from('chat-images')
+    .upload(fileName, file, {
+      contentType: file.type || 'image/jpeg',
+      cacheControl: '3600',
+      upsert: false,
+    })
+  if (error) { console.error('uploadChatImage:', error); return null }
+  const { data: urlData } = supabase.storage.from('chat-images').getPublicUrl(data.path)
+  return urlData.publicUrl
 }
 
 // ─── Albums ──────────────────────────────────────────────────
@@ -65,6 +100,25 @@ export async function saveAlbum(userId: string, album: UserAlbum): Promise<void>
     user_id: userId, data: album, updated_at: Date.now(),
   })
   if (error) console.error('saveAlbum:', error)
+}
+
+// ─── Public profile fetcher (sin auth) ──────────────────────
+
+export async function fetchPublicProfile(userId: string): Promise<{ user: User; album: UserAlbum } | null> {
+  if (!supabase) return null
+  const [userRes, albumRes] = await Promise.all([
+    supabase.from('users').select('*').eq('id', userId).maybeSingle(),
+    supabase.from('albums').select('data').eq('user_id', userId).maybeSingle(),
+  ])
+  if (userRes.error || !userRes.data) return null
+  const u = userRes.data
+  return {
+    user: {
+      id: u.id, name: u.name, avatar: u.avatar, avatarUrl: u.avatar_url || undefined,
+      pin: '', isAdmin: u.is_admin || false, createdAt: u.created_at,
+    },
+    album: (albumRes.data?.data as UserAlbum) || {},
+  }
 }
 
 // ─── Trades ──────────────────────────────────────────────────
@@ -178,7 +232,7 @@ export async function fetchMessages(chatId: string, limit = 50): Promise<Message
   return (data || []).map((m: any) => ({
     id: m.id, chatId: m.chat_id, fromUserId: m.from_user_id,
     text: m.text, imageUrl: m.image_url, deleted: m.deleted, createdAt: m.created_at,
-  })).reverse() // chronological order
+  })).reverse()
 }
 
 export async function sendMessageRemote(msg: Message): Promise<void> {
@@ -280,17 +334,10 @@ export function subscribeToChats(callback: () => void) {
   return () => { supabase.removeChannel(channel) }
 }
 
-export function subscribeToTyping(chatId: string, callback: (indicators: TypingIndicator[]) => void) {
+export function subscribeToUsers(callback: () => void) {
   if (!supabase) return () => {}
-  const channel = supabase.channel(`typing-${chatId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'typing_indicators', filter: `chat_id=eq.${chatId}` },
-      async () => {
-        const { data } = await supabase.from('typing_indicators').select('*').eq('chat_id', chatId)
-        const fresh = Date.now() - 5000 // valid for 5s
-        const active = (data || []).filter((t: any) => t.updated_at > fresh).map((t: any) => ({
-          chatId: t.chat_id, userId: t.user_id, updatedAt: t.updated_at,
-        }))
-        callback(active)
-      }).subscribe()
+  const channel = supabase.channel('users-ch').on('postgres_changes', {
+    event: '*', schema: 'public', table: 'users'
+  }, callback).subscribe()
   return () => { supabase.removeChannel(channel) }
 }

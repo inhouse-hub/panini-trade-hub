@@ -2,7 +2,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Home, BookOpen, ArrowLeftRight, Users, Undo2, Save, CheckCircle, LogOut, Bell, ShieldCheck, MessageSquare } from 'lucide-react'
+import { Home, BookOpen, ArrowLeftRight, Users, Undo2, Save, CheckCircle, LogOut, Bell, ShieldCheck, MessageSquare, Search } from 'lucide-react'
 import { TabType } from '@/lib/types'
 import { useUser } from '@/lib/user-context'
 import { Dashboard } from './dashboard'
@@ -12,6 +12,8 @@ import { UsersView } from './users-view'
 import { ChatView } from './chat-view'
 import { ViewingUserModal } from './viewing-user-modal'
 import { NotificationsPanel } from './notifications-panel'
+import { GlobalSearch } from './global-search'
+import { Avatar } from './avatar'
 import { cn } from '@/lib/utils'
 
 const TABS: { id: TabType; label: string; icon: typeof Home }[] = [
@@ -27,6 +29,7 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
   const { canUndo, undo, lastSaveTime, viewingUserId, activeUser, isAdmin, unreadCount, trades, totalUnreadMessages } = useUser()
   const [showSaveIndicator, setShowSaveIndicator] = useState(false)
   const [showNotifs, setShowNotifs] = useState(false)
+  const [showSearch, setShowSearch] = useState(false)
 
   useEffect(() => {
     if (lastSaveTime) {
@@ -35,6 +38,22 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
       return () => clearTimeout(t)
     }
   }, [lastSaveTime])
+
+  // Cmd+K / Ctrl+K to open search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        setShowSearch(true)
+      }
+      if (e.key === 'Escape') {
+        setShowSearch(false)
+        setShowNotifs(false)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   const pendingTrades = trades.filter(t => t.status === 'pending' && t.toUserId === activeUser?.id).length
 
@@ -60,10 +79,13 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
                   {activeUser && (
                     <>
                       <span className="text-muted-foreground/40">·</span>
-                      <p className="text-xs text-foreground/80 truncate flex items-center gap-1">
-                        {activeUser.avatar} {activeUser.name}
-                        {isAdmin && <ShieldCheck className="w-3 h-3 text-gold" />}
-                      </p>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Avatar user={activeUser} size="xs" />
+                        <p className="text-xs text-foreground/80 truncate flex items-center gap-1">
+                          {activeUser.name}
+                          {isAdmin && <ShieldCheck className="w-3 h-3 text-gold" />}
+                        </p>
+                      </div>
                     </>
                   )}
                 </div>
@@ -81,6 +103,14 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
                   <><Save className="w-3 h-3" /></>
                 ) : null}
               </div>
+
+              <button
+                onClick={() => setShowSearch(true)}
+                className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                title="Buscar estampa (Cmd+K)"
+              >
+                <Search className="w-4 h-4" />
+              </button>
 
               <button
                 onClick={() => setShowNotifs(true)}
@@ -159,6 +189,7 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
 
       {viewingUserId && <ViewingUserModal />}
       {showNotifs && <NotificationsPanel onClose={() => setShowNotifs(false)} />}
+      {showSearch && <GlobalSearch onClose={() => setShowSearch(false)} />}
     </div>
   )
 }

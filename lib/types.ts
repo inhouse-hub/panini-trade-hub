@@ -19,6 +19,7 @@ export interface User {
   id: string
   name: string
   avatar: string
+  avatarUrl?: string  // URL de foto subida (opcional, sobreescribe el emoji)
   pin: string
   isAdmin?: boolean
   createdAt: number
@@ -67,8 +68,6 @@ export interface Notification {
   read: boolean
   createdAt: number
 }
-
-// ─── Chats / Messages ─────────────────────────────────────
 
 export type ChatType = 'group' | 'dm'
 

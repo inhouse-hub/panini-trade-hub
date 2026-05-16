@@ -1,31 +1,45 @@
+// app/layout.tsx — REEMPLAZA el archivo existente
+
 import type { Metadata, Viewport } from 'next'
-import { Manrope, JetBrains_Mono, Bebas_Neue } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
+import { Bebas_Neue, Manrope, JetBrains_Mono } from 'next/font/google'
+import { PWARegister } from '@/components/pwa-register'
 import './globals.css'
 
-const manrope = Manrope({ 
-  subsets: ["latin"],
-  variable: '--font-manrope',
-  display: 'swap',
-})
-
-const jetbrainsMono = JetBrains_Mono({ 
-  subsets: ["latin"],
-  variable: '--font-jetbrains',
-  display: 'swap',
-})
-
-const bebasNeue = Bebas_Neue({ 
+const bebas = Bebas_Neue({
   weight: '400',
-  subsets: ["latin"],
-  variable: '--font-bebas',
-  display: 'swap',
+  subsets: ['latin'],
+  variable: '--font-display',
+})
+
+const manrope = Manrope({
+  subsets: ['latin'],
+  variable: '--font-sans',
+})
+
+const jetbrains = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-mono',
 })
 
 export const metadata: Metadata = {
-  title: 'Panini Trade Hub | World Cup 2026',
-  description: 'Gestiona tu colección de estampas del Mundial 2026 e intercambia con otros coleccionistas',
-  generator: 'v0.app',
+  title: 'Panini Trade Hub — Mundial 2026',
+  description: 'Gestiona tu álbum del Mundial 2026 e intercambia estampas con tus amigos',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Panini',
+  },
+  icons: {
+    icon: [
+      { url: '/icon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/apple-icon.png', sizes: '180x180', type: 'image/png' },
+    ],
+  },
 }
 
 export const viewport: Viewport = {
@@ -38,14 +52,14 @@ export const viewport: Viewport = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode
-}>) {
+}) {
   return (
-    <html lang="es" className={`${manrope.variable} ${jetbrainsMono.variable} ${bebasNeue.variable} bg-background`}>
-      <body className="font-sans antialiased min-h-screen bg-gradient-radial">
+    <html lang="es" className={`${bebas.variable} ${manrope.variable} ${jetbrains.variable}`}>
+      <body className="font-sans antialiased">
         {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
+        <PWARegister />
       </body>
     </html>
   )
