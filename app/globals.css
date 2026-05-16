@@ -1,0 +1,158 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: oklch(0.12 0.01 250);
+  --foreground: oklch(0.98 0 0);
+  --card: oklch(0.15 0.01 250);
+  --card-foreground: oklch(0.98 0 0);
+  --popover: oklch(0.13 0.01 250);
+  --popover-foreground: oklch(0.98 0 0);
+  --primary: oklch(0.82 0.17 85);
+  --primary-foreground: oklch(0.15 0.01 250);
+  --secondary: oklch(0.75 0.15 195);
+  --secondary-foreground: oklch(0.15 0.01 250);
+  --muted: oklch(0.22 0.01 250);
+  --muted-foreground: oklch(0.65 0 0);
+  --accent: oklch(0.75 0.15 195);
+  --accent-foreground: oklch(0.15 0.01 250);
+  --destructive: oklch(0.55 0.2 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.28 0.02 250);
+  --input: oklch(0.22 0.01 250);
+  --ring: oklch(0.82 0.17 85);
+  --radius: 0.75rem;
+  
+  /* Custom colors */
+  --gold: oklch(0.82 0.17 85);
+  --gold-dim: oklch(0.65 0.14 85);
+  --cyan: oklch(0.75 0.15 195);
+  --cyan-dim: oklch(0.55 0.12 195);
+  --success: oklch(0.7 0.18 145);
+  --success-dim: oklch(0.45 0.12 145);
+  --warning: oklch(0.75 0.18 65);
+  --danger: oklch(0.6 0.2 25);
+  
+  /* Sticker states */
+  --sticker-unmarked: oklch(0.35 0 0);
+  --sticker-has: oklch(0.55 0.15 145);
+  --sticker-repeated: oklch(0.75 0.15 195);
+  --sticker-missing: oklch(0.55 0.18 25);
+}
+
+@theme inline {
+  --font-sans: 'Manrope', 'Manrope Fallback', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'JetBrains Mono Fallback', monospace;
+  --font-display: 'Bebas Neue', 'Bebas Neue Fallback', sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-gold: var(--gold);
+  --color-gold-dim: var(--gold-dim);
+  --color-cyan: var(--cyan);
+  --color-cyan-dim: var(--cyan-dim);
+  --color-success: var(--success);
+  --color-success-dim: var(--success-dim);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-sticker-unmarked: var(--sticker-unmarked);
+  --color-sticker-has: var(--sticker-has);
+  --color-sticker-repeated: var(--sticker-repeated);
+  --color-sticker-missing: var(--sticker-missing);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--muted);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-dim);
+}
+
+/* Radial gradient background */
+.bg-gradient-radial {
+  background: radial-gradient(ellipse at top, var(--card) 0%, var(--background) 50%),
+              radial-gradient(ellipse at bottom right, oklch(0.2 0.05 195 / 0.3) 0%, transparent 50%),
+              radial-gradient(ellipse at bottom left, oklch(0.2 0.05 85 / 0.2) 0%, transparent 50%);
+}
+
+/* Sticker animations */
+@keyframes sticker-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+.sticker-pop {
+  animation: sticker-pop 0.2s ease-out;
+}
+
+@keyframes progress-shine {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.progress-shine {
+  background: linear-gradient(
+    90deg,
+    var(--gold) 0%,
+    oklch(0.9 0.15 85) 50%,
+    var(--gold) 100%
+  );
+  background-size: 200% 100%;
+  animation: progress-shine 2s ease-in-out infinite;
+}
+
+/* Celebration animation */
+@keyframes celebrate {
+  0%, 100% { transform: scale(1) rotate(0deg); }
+  25% { transform: scale(1.1) rotate(-5deg); }
+  75% { transform: scale(1.1) rotate(5deg); }
+}
+
+.celebrate {
+  animation: celebrate 0.5s ease-in-out;
+}
