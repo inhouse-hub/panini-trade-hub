@@ -2,7 +2,7 @@
 'use client'
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react'
-import { User, UserAlbum, StickerState, TradeRecord, TradeStatus, Notification, NotificationType } from './types'
+import { User, UserAlbum, StickerState, TradeRecord, TradeStatus, Notification, NotificationType, Chat, Message } from './types'
 import { DEFAULT_USERS, createEmptyAlbum, createRoniAlbum, ALBUM_SECTIONS } from './album-data'
 import {
   isSupabaseEnabled, fetchUsers, upsertUser, deleteUserRemote,
@@ -10,6 +10,11 @@ import {
   updateTradeStatus, subscribeToTrades, subscribeToAlbums,
   fetchNotifications, createNotification, markNotificationRead,
   markAllNotificationsRead, subscribeToNotifications,
+  fetchChats, createChat, updateChatLastMessage,
+  fetchMessages, sendMessageRemote, deleteMessageRemote,
+  fetchChatReads, markChatReadRemote,
+  setTypingRemote, clearTypingRemote,
+  subscribeToMessages, subscribeToChats,
 } from './supabase'
 
 const STORAGE_KEYS = {
@@ -30,6 +35,10 @@ interface UserContextType {
   trades: TradeRecord[]
   notifications: Notification[]
   unreadCount: number
+  chats: Chat[]
+  messagesByChat: { [chatId: string]: Message[] }
+  chatReads: { [chatId: string]: number }
+  totalUnreadMessages: number
   viewingUserId: string | null
   viewingUserAlbum: UserAlbum | null
   canUndo: boolean
@@ -56,6 +65,15 @@ interface UserContextType {
   pushNotification: (userId: string, type: NotificationType, title: string, message?: string, data?: any) => void
   markNotifRead: (id: string) => void
   markAllNotifsRead: () => void
+  // Chat actions
+  loadChatMessages: (chatId: string) => Promise<void>
+  sendMessage: (chatId: string, text: string, imageUrl?: string) => Promise<void>
+  deleteMessage: (messageId: string) => Promise<void>
+  markChatRead: (chatId: string) => void
+  setTyping: (chatId: string) => void
+  clearTyping: (chatId: string) => void
+  getOrCreateDM: (otherUserId: string) => Promise<string>
+  unreadCountForChat: (chatId: string) => number
   getStats: (userId: string) => { total: number; has: number; missing: number; repeated: number; unmarked: number; repeatedCount: number }
   undo: () => void
 }
@@ -68,6 +86,9 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const [albums, setAlbums] = useState<{ [userId: string]: UserAlbum }>({})
   const [trades, setTrades] = useState<TradeRecord[]>([])
   const [notifications, setNotifications] = useState<Notification[]>([])
+  const [chats, setChats] = useState<Chat[]>([])
+  const [messagesByChat, setMessagesByChat] = useState<{ [chatId: string]: Message[] }>({})
+  const [chatReads, setChatReads] = useState<{ [chatId: string]: number }>({})
   const [isInitialized, setIsInitialized] = useState(false)
   const [viewingUserId, setViewingUserId] = useState<string | null>(null)
   const [undoHistory, setUndoHistory] = useState<UndoSnapshot[]>([])
@@ -76,7 +97,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const pendingAlbumSaves = useRef<Set<string>>(new Set())
 
-  // ── Init from Supabase ────────────────────────────────────
+  // ── Init ──────────────────────────────────────────────────
   useEffect(() => {
     if (typeof window === 'undefined') return
 
@@ -99,7 +120,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
             for (const [uid, alb] of Object.entries(initialAlbums)) await saveAlbum(uid, alb)
             setAlbums(initialAlbums)
           } else {
-            // Verifica que Jorge exista; si no, lo crea
             let usersToUse = remoteUsers
             const hasJorge = remoteUsers.find(u => u.id === 'jorge')
             if (!hasJorge) {
@@ -126,10 +146,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // NO recuperar active user de localStorage en fase 3:
-      // queremos que SIEMPRE empiece en la pantalla de PIN
-      // (eso lo controla app/page.tsx, no aquí)
-
       const storedUndo = localStorage.getItem(STORAGE_KEYS.UNDO_HISTORY)
       if (storedUndo) setUndoHistory(JSON.parse(storedUndo))
 
@@ -139,7 +155,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
     init()
   }, [])
 
-  // ── Realtime subscriptions ────────────────────────────────
+  // ── Realtime subs (trades + albums) ───────────────────────
   useEffect(() => {
     if (!isInitialized || !isOnline) return
 
@@ -147,7 +163,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
       const fresh = await fetchTrades()
       setTrades(fresh)
     })
-
     const unsubAlbums = subscribeToAlbums(async () => {
       const fresh = await fetchAllAlbums()
       setAlbums(prev => ({ ...prev, ...fresh }))
@@ -156,20 +171,57 @@ export function UserProvider({ children }: { children: ReactNode }) {
     return () => { unsubTrades(); unsubAlbums() }
   }, [isInitialized, isOnline])
 
-  // ── Subscribe to notifications for active user ───────────
+  // ── Notifications + Chats subscriptions for active user ──
   useEffect(() => {
     if (!isInitialized || !isOnline || !activeUserId) return
 
     fetchNotifications(activeUserId).then(setNotifications)
+    fetchChats(activeUserId).then(c => {
+      // Asegurar que el grupo "Todos" siempre incluya al activeUserId
+      const grupo = c.find(x => x.id === 'group_todos')
+      if (grupo && !grupo.participants.includes(activeUserId)) {
+        const updated = { ...grupo, participants: [...grupo.participants, activeUserId] }
+        createChat(updated)
+      }
+      setChats(c)
+    })
+    fetchChatReads(activeUserId).then(setChatReads)
 
-    const unsub = subscribeToNotifications(activeUserId, async () => {
+    const unsubNotif = subscribeToNotifications(activeUserId, async () => {
       const fresh = await fetchNotifications(activeUserId)
       setNotifications(fresh)
     })
-    return () => unsub()
+
+    const unsubMsg = subscribeToMessages((msg) => {
+      setMessagesByChat(prev => {
+        const list = prev[msg.chatId] || []
+        // Replace if exists (update), else prepend chronologically at the end
+        const idx = list.findIndex(m => m.id === msg.id)
+        let newList: Message[]
+        if (idx >= 0) {
+          newList = [...list]
+          newList[idx] = msg
+        } else {
+          newList = [...list, msg]
+        }
+        return { ...prev, [msg.chatId]: newList }
+      })
+      // Push notification if message is for me and from someone else
+      if (msg.fromUserId !== activeUserId) {
+        // Refresca lista de chats (last message updated)
+        fetchChats(activeUserId).then(setChats)
+      }
+    })
+
+    const unsubChats = subscribeToChats(async () => {
+      const fresh = await fetchChats(activeUserId)
+      setChats(fresh)
+    })
+
+    return () => { unsubNotif(); unsubMsg(); unsubChats() }
   }, [isInitialized, isOnline, activeUserId])
 
-  // ── Persistence (only active user pref locally) ──────────
+  // ── Persistence ───────────────────────────────────────────
   useEffect(() => {
     if (!isInitialized || !activeUserId) return
     localStorage.setItem(STORAGE_KEYS.ACTIVE_USER, activeUserId)
@@ -202,6 +254,17 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const isAdmin = activeUser?.isAdmin === true
   const unreadCount = notifications.filter(n => !n.read).length
 
+  // ── Unread messages per chat ──────────────────────────────
+  const unreadCountForChat = useCallback((chatId: string): number => {
+    if (!activeUserId) return 0
+    const msgs = messagesByChat[chatId] || []
+    const lastRead = chatReads[chatId] || 0
+    return msgs.filter(m => m.fromUserId !== activeUserId && m.createdAt > lastRead).length
+  }, [activeUserId, messagesByChat, chatReads])
+
+  const totalUnreadMessages = chats.reduce((sum, c) => sum + unreadCountForChat(c.id), 0)
+
+  // ── User actions ──────────────────────────────────────────
   const saveUndoSnapshot = useCallback(() => {
     if (!activeUserId || !albums[activeUserId]) return
     setUndoHistory([{
@@ -220,6 +283,9 @@ export function UserProvider({ children }: { children: ReactNode }) {
     setActiveUserId(null)
     setViewingUserId(null)
     setNotifications([])
+    setChats([])
+    setMessagesByChat({})
+    setChatReads({})
     localStorage.removeItem(STORAGE_KEYS.ACTIVE_USER)
   }, [])
 
@@ -261,6 +327,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
     if (isOnline) deleteUserRemote(userId)
   }, [users, activeUserId, isOnline])
 
+  // ── Stickers ──────────────────────────────────────────────
   const updateStickerState = useCallback((sectionCode: string, stickerNumber: string, state: StickerState, count?: number) => {
     if (!activeUserId) return
     saveUndoSnapshot()
@@ -320,6 +387,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const getUserAlbum = useCallback((userId: string) => albums[userId] || null, [albums])
 
+  // ── Notifications ─────────────────────────────────────────
   const pushNotification = useCallback((userId: string, type: NotificationType, title: string, message?: string, data?: any) => {
     const notif: Notification = {
       id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -328,6 +396,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
     if (isOnline) createNotification(notif)
   }, [isOnline])
 
+  // ── Trades ────────────────────────────────────────────────
   const proposeTrade = useCallback((toUserId: string, given: string[], received: string[]) => {
     if (!activeUserId) return
     const trade: TradeRecord = {
@@ -351,7 +420,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
     setAlbums(prev => {
       const newAlbums = JSON.parse(JSON.stringify(prev))
-
       for (const sticker of given) {
         const [sc, num] = sticker.split('-')
         if (newAlbums[fromUserId]?.[sc]?.[num]) {
@@ -374,7 +442,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
         if (!newAlbums[fromUserId][sc]) newAlbums[fromUserId][sc] = {}
         newAlbums[fromUserId][sc][num] = { state: 'has', count: 1 }
       }
-
       if (isOnline) {
         saveAlbum(fromUserId, newAlbums[fromUserId])
         saveAlbum(toUserId, newAlbums[toUserId])
@@ -420,6 +487,89 @@ export function UserProvider({ children }: { children: ReactNode }) {
     if (isOnline) markAllNotificationsRead(activeUserId)
   }, [activeUserId, isOnline])
 
+  // ── CHATS ─────────────────────────────────────────────────
+
+  const loadChatMessages = useCallback(async (chatId: string) => {
+    const msgs = await fetchMessages(chatId, 100)
+    setMessagesByChat(prev => ({ ...prev, [chatId]: msgs }))
+  }, [])
+
+  const getOrCreateDM = useCallback(async (otherUserId: string): Promise<string> => {
+    if (!activeUserId) return ''
+    // DM id determinístico (ordena ids alfabéticamente)
+    const ids = [activeUserId, otherUserId].sort()
+    const chatId = `dm_${ids[0]}_${ids[1]}`
+    const existing = chats.find(c => c.id === chatId)
+    if (existing) return chatId
+
+    const newChat: Chat = {
+      id: chatId, type: 'dm', participants: ids, createdAt: Date.now(),
+    }
+    setChats(prev => [...prev, newChat])
+    if (isOnline) await createChat(newChat)
+    return chatId
+  }, [activeUserId, chats, isOnline])
+
+  const sendMessage = useCallback(async (chatId: string, text: string, imageUrl?: string) => {
+    if (!activeUserId || !text.trim()) return
+    const msg: Message = {
+      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      chatId, fromUserId: activeUserId,
+      text: text.trim(), imageUrl, deleted: false, createdAt: Date.now(),
+    }
+    // Optimistic update
+    setMessagesByChat(prev => ({
+      ...prev,
+      [chatId]: [...(prev[chatId] || []), msg],
+    }))
+    if (isOnline) {
+      await sendMessageRemote(msg)
+      await updateChatLastMessage(chatId, msg.text, activeUserId)
+    }
+    // Push notifications to other participants
+    const chat = chats.find(c => c.id === chatId)
+    if (chat) {
+      const fromName = users.find(u => u.id === activeUserId)?.name || 'Alguien'
+      const preview = msg.text.length > 60 ? msg.text.slice(0, 60) + '…' : msg.text
+      const title = chat.type === 'group'
+        ? `💬 ${fromName} en ${chat.name || 'grupo'}`
+        : `💬 Mensaje de ${fromName}`
+      for (const pid of chat.participants) {
+        if (pid !== activeUserId) {
+          pushNotification(pid, 'new_message', title, preview, { chatId })
+        }
+      }
+    }
+  }, [activeUserId, isOnline, chats, users, pushNotification])
+
+  const deleteMessage = useCallback(async (messageId: string) => {
+    setMessagesByChat(prev => {
+      const result = { ...prev }
+      for (const cid in result) {
+        result[cid] = result[cid].map(m => m.id === messageId ? { ...m, deleted: true, text: '[mensaje eliminado]' } : m)
+      }
+      return result
+    })
+    if (isOnline) await deleteMessageRemote(messageId)
+  }, [isOnline])
+
+  const markChatRead = useCallback((chatId: string) => {
+    if (!activeUserId) return
+    setChatReads(prev => ({ ...prev, [chatId]: Date.now() }))
+    if (isOnline) markChatReadRemote(chatId, activeUserId)
+  }, [activeUserId, isOnline])
+
+  const setTyping = useCallback((chatId: string) => {
+    if (!activeUserId) return
+    if (isOnline) setTypingRemote(chatId, activeUserId)
+  }, [activeUserId, isOnline])
+
+  const clearTyping = useCallback((chatId: string) => {
+    if (!activeUserId) return
+    if (isOnline) clearTypingRemote(chatId, activeUserId)
+  }, [activeUserId, isOnline])
+
+  // ── Stats ─────────────────────────────────────────────────
   const getStats = useCallback((userId: string) => {
     const album = albums[userId]
     if (!album) return { total: 0, has: 0, missing: 0, repeated: 0, unmarked: 0, repeatedCount: 0 }
@@ -461,12 +611,15 @@ export function UserProvider({ children }: { children: ReactNode }) {
   return (
     <UserContext.Provider value={{
       users, activeUser, activeUserAlbum, trades, notifications, unreadCount,
+      chats, messagesByChat, chatReads, totalUnreadMessages,
       viewingUserId, viewingUserAlbum, canUndo, lastSaveTime, isOnline, isAdmin,
       setActiveUser, signOut, setViewingUser, addUser, updateUser, deleteUser,
       updateStickerState, cycleStickerState, updateStickerCount,
       markAllSection, clearSection, getUserAlbum,
       executeTrade, proposeTrade, acceptTrade, rejectTrade, completeTrade,
       pushNotification, markNotifRead, markAllNotifsRead,
+      loadChatMessages, sendMessage, deleteMessage, markChatRead,
+      setTyping, clearTyping, getOrCreateDM, unreadCountForChat,
       getStats, undo,
     }}>
       {children}

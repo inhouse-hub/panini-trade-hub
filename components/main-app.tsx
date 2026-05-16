@@ -2,13 +2,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Home, BookOpen, ArrowLeftRight, Users, Undo2, Save, CheckCircle, LogOut, Bell, ShieldCheck } from 'lucide-react'
+import { Home, BookOpen, ArrowLeftRight, Users, Undo2, Save, CheckCircle, LogOut, Bell, ShieldCheck, MessageSquare } from 'lucide-react'
 import { TabType } from '@/lib/types'
 import { useUser } from '@/lib/user-context'
 import { Dashboard } from './dashboard'
 import { AlbumView } from './album-view'
 import { TradeView } from './trade-view'
 import { UsersView } from './users-view'
+import { ChatView } from './chat-view'
 import { ViewingUserModal } from './viewing-user-modal'
 import { NotificationsPanel } from './notifications-panel'
 import { cn } from '@/lib/utils'
@@ -17,12 +18,13 @@ const TABS: { id: TabType; label: string; icon: typeof Home }[] = [
   { id: 'home', label: 'Inicio', icon: Home },
   { id: 'album', label: 'Album', icon: BookOpen },
   { id: 'trade', label: 'Trade', icon: ArrowLeftRight },
+  { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'users', label: 'Usuarios', icon: Users },
 ]
 
 export function MainApp({ onSignOut }: { onSignOut: () => void }) {
   const [activeTab, setActiveTab] = useState<TabType>('home')
-  const { canUndo, undo, lastSaveTime, viewingUserId, activeUser, isAdmin, unreadCount } = useUser()
+  const { canUndo, undo, lastSaveTime, viewingUserId, activeUser, isAdmin, unreadCount, trades, totalUnreadMessages } = useUser()
   const [showSaveIndicator, setShowSaveIndicator] = useState(false)
   const [showNotifs, setShowNotifs] = useState(false)
 
@@ -34,13 +36,11 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
     }
   }, [lastSaveTime])
 
-  // Cuenta de trades pendientes para badge en tab Trade
-  const { trades } = useUser()
   const pendingTrades = trades.filter(t => t.status === 'pending' && t.toUserId === activeUser?.id).length
 
-  // Compute "has updates" flag for tab badge
   const tabBadge = (tabId: TabType): number => {
     if (tabId === 'trade') return pendingTrades
+    if (tabId === 'chat') return totalUnreadMessages
     return 0
   }
 
@@ -71,7 +71,6 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
-              {/* Save indicator */}
               <div className={cn(
                 'flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-all duration-300',
                 showSaveIndicator ? 'bg-success/20 text-success opacity-100' : 'text-muted-foreground opacity-60'
@@ -83,7 +82,6 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
                 ) : null}
               </div>
 
-              {/* Notifications */}
               <button
                 onClick={() => setShowNotifs(true)}
                 className="relative p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
@@ -97,7 +95,6 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
                 )}
               </button>
 
-              {/* Undo */}
               {canUndo && (
                 <button
                   onClick={undo}
@@ -108,7 +105,6 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
                 </button>
               )}
 
-              {/* Sign out */}
               <button
                 onClick={onSignOut}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg text-xs font-medium transition-colors"
@@ -126,6 +122,7 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
         {activeTab === 'home' && <Dashboard />}
         {activeTab === 'album' && <AlbumView />}
         {activeTab === 'trade' && <TradeView />}
+        {activeTab === 'chat' && <ChatView />}
         {activeTab === 'users' && <UsersView />}
       </main>
 
@@ -140,7 +137,7 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  'relative flex flex-col items-center gap-1 py-3 px-4 flex-1 transition-colors',
+                  'relative flex flex-col items-center gap-1 py-3 px-2 flex-1 transition-colors',
                   isActive ? 'text-gold' : 'text-muted-foreground hover:text-foreground'
                 )}
               >
@@ -148,12 +145,12 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
                   <Icon className={cn('w-5 h-5 transition-transform', isActive && 'scale-110')} />
                   {badge > 0 && (
                     <span className="absolute -top-1.5 -right-2 min-w-[16px] h-[16px] px-1 rounded-full bg-sticker-missing text-white text-[9px] font-bold flex items-center justify-center">
-                      {badge}
+                      {badge > 9 ? '9+' : badge}
                     </span>
                   )}
                 </div>
-                <span className={cn('text-xs font-medium', isActive && 'font-semibold')}>{tab.label}</span>
-                {isActive && <div className="absolute bottom-0 w-12 h-0.5 bg-gold rounded-full" />}
+                <span className={cn('text-[11px] font-medium', isActive && 'font-semibold')}>{tab.label}</span>
+                {isActive && <div className="absolute bottom-0 w-10 h-0.5 bg-gold rounded-full" />}
               </button>
             )
           })}

@@ -55,7 +55,7 @@ export interface TradeMatch {
   mutualPossible: number
 }
 
-export type NotificationType = 'trade_proposal' | 'trade_accepted' | 'trade_rejected' | 'admin_action'
+export type NotificationType = 'trade_proposal' | 'trade_accepted' | 'trade_rejected' | 'admin_action' | 'new_message'
 
 export interface Notification {
   id: string
@@ -68,5 +68,36 @@ export interface Notification {
   createdAt: number
 }
 
+// ─── Chats / Messages ─────────────────────────────────────
+
+export type ChatType = 'group' | 'dm'
+
+export interface Chat {
+  id: string
+  type: ChatType
+  name?: string
+  participants: string[]
+  createdAt: number
+  lastMessageAt?: number
+  lastMessageText?: string
+  lastMessageFrom?: string
+}
+
+export interface Message {
+  id: string
+  chatId: string
+  fromUserId: string
+  text: string
+  imageUrl?: string
+  deleted: boolean
+  createdAt: number
+}
+
+export interface TypingIndicator {
+  chatId: string
+  userId: string
+  updatedAt: number
+}
+
 export type FilterType = 'all' | 'missing' | 'repeated' | 'complete' | 'unmarked'
-export type TabType = 'home' | 'album' | 'trade' | 'users'
+export type TabType = 'home' | 'album' | 'trade' | 'chat' | 'users'
