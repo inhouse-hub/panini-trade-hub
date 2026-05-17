@@ -352,15 +352,29 @@ export function UserProvider({ children }: { children: ReactNode }) {
   }, [activeUserId, saveUndoSnapshot])
 
   const cycleStickerState = useCallback((sectionCode: string, stickerNumber: string) => {
-    if (!activeUserId || !albums[activeUserId]) return
-    const cur = albums[activeUserId][sectionCode]?.[stickerNumber]
+  if (!activeUserId) return
+  saveUndoSnapshot()
+  pendingAlbumSaves.current.add(activeUserId)
+  // Lee el estado actual desde el setter (no del closure) para evitar race conditions
+  setAlbums(prev => {
+    const cur = prev[activeUserId]?.[sectionCode]?.[stickerNumber]
     const curState = cur?.state || 'unmarked'
     const order: StickerState[] = ['unmarked', 'has', 'repeated', 'missing']
     const idx = order.indexOf(curState)
     const next = order[(idx + 1) % order.length]
     const nextCount = next === 'repeated' ? 2 : next === 'has' ? 1 : 0
-    updateStickerState(sectionCode, stickerNumber, next, nextCount)
-  }, [activeUserId, albums, updateStickerState])
+    return {
+      ...prev,
+      [activeUserId]: {
+        ...prev[activeUserId],
+        [sectionCode]: {
+          ...prev[activeUserId]?.[sectionCode],
+          [stickerNumber]: { state: next, count: nextCount }
+        }
+      }
+    }
+  })
+}, [activeUserId, saveUndoSnapshot])
 
   const updateStickerCount = useCallback((sectionCode: string, stickerNumber: string, delta: number) => {
     if (!activeUserId || !albums[activeUserId]) return
