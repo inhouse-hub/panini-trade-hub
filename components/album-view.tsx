@@ -27,32 +27,33 @@ export function AlbumView() {
 
     return ALBUM_SECTIONS.filter(section => {
       // Search filter
-      const matchesSearch = searchQuery === '' || 
+      const matchesSearch = searchQuery === '' ||
         section.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
         section.name.toLowerCase().includes(searchQuery.toLowerCase())
-      
+
       if (!matchesSearch) return false
-      
+
       // Status filter
       if (filter === 'all') return true
-      
+
       const sectionData = activeUserAlbum[section.code] || {}
       let hasCount = 0
       let repeatedCount = 0
       let missingCount = 0
       let unmarkedCount = 0
-      
+
       for (let i = section.startNumber; i < section.startNumber + section.stickerCount; i++) {
         const sticker = sectionData[i.toString()]
         if (!sticker || sticker.state === 'unmarked') unmarkedCount++
-        else if (sticker.state === 'has') hasCount++
-        else if (sticker.state === 'repeated') repeatedCount++
+        else if (sticker.state === 'has') {
+          hasCount++
+          if (sticker.count >= 2) repeatedCount++
+        }
         else if (sticker.state === 'missing') missingCount++
       }
-      
-      const ownedCount = hasCount + repeatedCount
-      const isComplete = ownedCount === section.stickerCount && missingCount === 0
-      
+
+      const isComplete = hasCount === section.stickerCount && missingCount === 0
+
       switch (filter) {
         case 'missing':
           return missingCount > 0
@@ -83,7 +84,7 @@ export function AlbumView() {
             className="w-full pl-10 pr-4 py-2.5 bg-card border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-gold/50 placeholder:text-muted-foreground"
           />
         </div>
-        
+
         {/* Filter dropdown */}
         <div className="relative">
           <button
@@ -97,7 +98,7 @@ export function AlbumView() {
               showFilterDropdown && 'rotate-180'
             )} />
           </button>
-          
+
           {showFilterDropdown && (
             <div className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-xl shadow-xl z-20 overflow-hidden">
               {FILTER_OPTIONS.map(option => (
@@ -127,7 +128,7 @@ export function AlbumView() {
         {filteredSections.map(section => (
           <SectionCard key={section.code} section={section} />
         ))}
-        
+
         {filteredSections.length === 0 && (
           <div className="text-center py-12 text-muted-foreground">
             No se encontraron secciones con los filtros actuales
