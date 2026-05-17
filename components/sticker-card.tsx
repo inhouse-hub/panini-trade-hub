@@ -1,3 +1,4 @@
+// components/sticker-card.tsx — REEMPLAZA el archivo existente
 'use client'
 
 import { useState } from 'react'
@@ -69,11 +70,11 @@ export function StickerCard({ sectionCode, number, state, count }: StickerCardPr
       {state === 'has' && (
         <button
           onClick={(e) => handleCountChange(e, 1)}
-          className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-cyan text-background border-2 border-background shadow-md hover:scale-110 active:scale-95 transition-transform z-10"
+          className="absolute -top-1.5 -right-1.5 min-w-[24px] h-6 px-1 flex items-center justify-center rounded-full bg-cyan text-background border-2 border-background shadow-md hover:scale-110 active:scale-95 transition-transform z-10"
           aria-label="Marcar como repetida o añadir copia"
         >
           {isRepeated ? (
-            <span className="font-bold text-[10px] leading-none">R×{count}</span>
+            <span className="font-bold text-[10px] leading-none whitespace-nowrap">R×{count}</span>
           ) : (
             <Plus className="w-3 h-3" strokeWidth={3} />
           )}

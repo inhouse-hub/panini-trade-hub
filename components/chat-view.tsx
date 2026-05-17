@@ -11,6 +11,7 @@ import { ALBUM_SECTIONS } from '@/lib/album-data'
 import { Message } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Avatar } from './avatar'
+import { ReactionBar, groupReactions } from './reaction-bar'
 
 const EMOJI_LIST = [
   '😀', '😂', '🤣', '😊', '😍', '🥰', '😎', '🤔', '😏', '😅',
@@ -29,6 +30,7 @@ export function ChatView() {
     loadChatMessages, sendMessage, deleteMessage, markChatRead,
     setTyping, clearTyping, getOrCreateDM, unreadCountForChat,
     activeUserAlbum, uploadChatImage,
+    reactions, toggleReactionOnMessage,
   } = useUser()
 
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
@@ -36,6 +38,7 @@ export function ChatView() {
   const [showEmojis, setShowEmojis] = useState(false)
   const [showNewDM, setShowNewDM] = useState(false)
   const [menuMsgId, setMenuMsgId] = useState<string | null>(null)
+  const [reactingMsgId, setReactingMsgId] = useState<string | null>(null)
   const [uploadingImage, setUploadingImage] = useState(false)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -361,6 +364,18 @@ export function ChatView() {
             const showSenderName = !isMe && selectedChat.type === 'group' &&
               (!prevMsg || prevMsg.fromUserId !== msg.fromUserId)
             const isMenuOpen = menuMsgId === msg.id
+            const msgReactionsRaw = reactions.filter(r => r.targetType === 'message' && r.targetId === msg.id)
+            const msgReactions = groupReactions(msgReactionsRaw.map(r => ({ emoji: r.emoji, userId: r.userId })))
+
+            let longPressTimer: NodeJS.Timeout | null = null
+            const startLongPress = () => {
+              longPressTimer = setTimeout(() => {
+                if (!msg.deleted) setReactingMsgId(msg.id)
+              }, 500)
+            }
+            const cancelLongPress = () => {
+              if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null }
+            }
 
             return (
               <div
@@ -378,6 +393,11 @@ export function ChatView() {
                       e.stopPropagation()
                       if (isMe && !msg.deleted) setMenuMsgId(isMenuOpen ? null : msg.id)
                     }}
+                    onMouseDown={startLongPress}
+                    onMouseUp={cancelLongPress}
+                    onMouseLeave={cancelLongPress}
+                    onTouchStart={startLongPress}
+                    onTouchEnd={cancelLongPress}
                     className={cn(
                       'relative px-3 py-2 rounded-2xl text-sm break-words',
                       isMe
@@ -407,6 +427,22 @@ export function ChatView() {
                       {formatMessageTime(msg.createdAt)}
                     </p>
                   </div>
+
+                  {/* Reacciones bajo el mensaje */}
+                  {(msgReactions.length > 0 || reactingMsgId === msg.id) && !msg.deleted && (
+                    <div className={cn('mt-1', isMe ? 'flex justify-end' : 'flex justify-start')}>
+                      <ReactionBar
+                        reactions={msgReactions}
+                        currentUserId={activeUser.id}
+                        onToggleReaction={(emoji) => {
+                          toggleReactionOnMessage(msg.id, emoji)
+                        }}
+                        showPicker={reactingMsgId === msg.id}
+                        onTogglePicker={() => setReactingMsgId(p => p === msg.id ? null : msg.id)}
+                        variant="message"
+                      />
+                    </div>
+                  )}
 
                   {/* Menú de mensaje propio */}
                   {isMenuOpen && isMe && !msg.deleted && (

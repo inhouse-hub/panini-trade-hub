@@ -10,6 +10,8 @@ import { useUser } from '@/lib/user-context'
 import { ALBUM_SECTIONS, getTotalStickerCount } from '@/lib/album-data'
 import { cn } from '@/lib/utils'
 import { Avatar } from './avatar'
+import { WeeklyChallenge } from './weekly-challenge'
+import { AchievementsView } from './achievements-view'
 
 const STREAK_KEY = 'panini_streak'
 const ACTIVITY_KEY = 'panini_activity'
@@ -107,9 +109,11 @@ export function Dashboard() {
       const data = activeUserAlbum[section.code] || {}
       let has = 0, missing = 0, repeated = 0
       for (const num in data) {
-        if (data[num].state === 'has') has++
+        if (data[num].state === 'has') {
+          has++
+          if (data[num].count >= 2) repeated++
+        }
         else if (data[num].state === 'missing') missing++
-        else if (data[num].state === 'repeated') { has++; repeated++ }
       }
       const owned = has // 'has' incluye estampas con repetidas (la base)
       const percent = (owned / section.stickerCount) * 100
@@ -178,7 +182,7 @@ export function Dashboard() {
       for (const num in data) {
         const code = `${section.code}-${num}`
         if (data[num].state === 'missing') myMissing.add(code)
-        if (data[num].state === 'repeated') myRepeated.add(code)
+        if (data[num].state === 'has' && data[num].count >= 2) myRepeated.add(code)
       }
     }
 
@@ -192,7 +196,7 @@ export function Dashboard() {
         const data = theirAlbum[section.code] || {}
         for (const num in data) {
           const code = `${section.code}-${num}`
-          if (data[num].state === 'repeated' && myMissing.has(code)) canGet++
+          if (data[num].state === 'has' && data[num].count >= 2 && myMissing.has(code)) canGet++
           if (data[num].state === 'missing' && myRepeated.has(code)) canGive++
         }
       }
@@ -232,7 +236,6 @@ export function Dashboard() {
   const stateLabel = (s: string) => {
     if (s === 'has') return { text: 'Marcaste como tiene', icon: Check, color: 'text-sticker-has' }
     if (s === 'missing') return { text: 'Marcaste como falta', icon: X, color: 'text-sticker-missing' }
-    if (s === 'repeated') return { text: 'Marcaste como repetida', icon: RefreshCw, color: 'text-sticker-repeated' }
     return { text: 'Cambio', icon: Circle, color: 'text-muted-foreground' }
   }
 
@@ -294,7 +297,7 @@ export function Dashboard() {
 
       {/* ═══ Stats grid (4 cards) ═══ */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard icon={Check} label="Tiene" value={stats.has + stats.repeated} pct={((stats.has + stats.repeated) / totalStickers) * 100} color="has" />
+        <StatCard icon={Check} label="Tiene" value={stats.has} pct={(stats.has / totalStickers) * 100} color="has" />
         <StatCard icon={RefreshCw} label="Repetidas" value={stats.repeated} sub={`${stats.repeatedCount} copias`} color="repeated" />
         <StatCard icon={X} label="Faltan" value={stats.missing} pct={(stats.missing / totalStickers) * 100} color="missing" />
         <StatCard icon={Circle} label="Sin revisar" value={stats.unmarked} pct={(stats.unmarked / totalStickers) * 100} color="muted" />
@@ -360,20 +363,24 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* ═══ Logros (países completados) ═══ */}
-      <div className="bg-card/50 backdrop-blur-sm border border-border rounded-2xl p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Trophy className="w-4 h-4 text-gold" />
-            <h3 className="font-display text-sm text-gold tracking-wider">LOGROS</h3>
+      {/* ═══ Reto Semanal ═══ */}
+      <WeeklyChallenge />
+
+      {/* ═══ Logros nuevo sistema ═══ */}
+      <AchievementsView compact />
+
+      {/* ═══ Países completados (resumen) ═══ */}
+      {completed.length > 0 && (
+        <div className="bg-card/50 backdrop-blur-sm border border-border rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-gold" />
+              <h3 className="font-display text-sm text-gold tracking-wider">PAÍSES COMPLETADOS</h3>
+            </div>
+            <span className="font-mono text-xs text-muted-foreground">
+              <span className="text-gold font-bold">{completed.length}</span>/{ALBUM_SECTIONS.length}
+            </span>
           </div>
-          <span className="font-mono text-xs text-muted-foreground">
-            <span className="text-gold font-bold">{completed.length}</span>/{ALBUM_SECTIONS.length}
-          </span>
-        </div>
-        {completed.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-4 text-center">Completa tu primer país para ganar un logro 🏅</p>
-        ) : (
           <div className="flex flex-wrap gap-2">
             {completed.map(s => (
               <div
@@ -386,8 +393,8 @@ export function Dashboard() {
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* ═══ Ranking + Trade opportunities ═══ */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

@@ -53,8 +53,10 @@ export default function PublicProfilePage({ params }: Props) {
     const data = album[section.code] || {}
     for (const num in data) {
       const code = `${section.code}-${num}`
-      if (data[num].state === 'has') has++
-      else if (data[num].state === 'repeated') { has++; repeated++; repeatedList.push(code) }
+      if (data[num].state === 'has') {
+        has++
+        if (data[num].count >= 2) { repeated++; repeatedList.push(code) }
+      }
       else if (data[num].state === 'missing') { missing++; missingList.push(code) }
     }
   }

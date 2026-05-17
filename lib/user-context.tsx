@@ -2,8 +2,9 @@
 'use client'
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react'
-import { User, UserAlbum, StickerState, TradeRecord, TradeStatus, Notification, NotificationType, Chat, Message } from './types'
+import { User, UserAlbum, StickerState, TradeRecord, TradeStatus, Notification, NotificationType, Chat, Message, FeedEvent, FeedEventType, Reaction, FeedComment, UserAchievement } from './types'
 import { DEFAULT_USERS, createEmptyAlbum, createRoniAlbum, ALBUM_SECTIONS } from './album-data'
+import { ACHIEVEMENTS, findNewlyUnlocked, AchievementContext } from './achievements'
 import {
   isSupabaseEnabled, fetchUsers, upsertUser, deleteUserRemote,
   fetchAllAlbums, saveAlbum, fetchTrades, createTrade as createTradeRemote,
@@ -17,6 +18,11 @@ import {
   subscribeToMessages, subscribeToChats, subscribeToUsers,
   uploadAvatar as uploadAvatarRemote,
   uploadChatImage as uploadChatImageRemote,
+  fetchFeedEvents, createFeedEvent,
+  fetchReactions, toggleReaction as toggleReactionRemote,
+  fetchComments, addComment as addCommentRemote,
+  fetchUserAchievements, unlockAchievement as unlockAchievementRemote,
+  subscribeToFeed, subscribeToReactions, subscribeToComments, subscribeToAchievements,
 } from './supabase'
 
 const STORAGE_KEYS = {
@@ -78,6 +84,15 @@ interface UserContextType {
   unreadCountForChat: (chatId: string) => number
   uploadAvatar: (userId: string, blob: Blob) => Promise<string | null>
   uploadChatImage: (chatId: string, blob: Blob) => Promise<string | null>
+  // Fase 7
+  feedEvents: FeedEvent[]
+  reactions: Reaction[]
+  comments: FeedComment[]
+  achievements: UserAchievement[]
+  toggleReactionOnEvent: (eventId: string, emoji: string) => Promise<void>
+  toggleReactionOnMessage: (messageId: string, emoji: string) => Promise<void>
+  postComment: (eventId: string, text: string) => Promise<void>
+  loadCommentsFor: (eventId: string) => Promise<void>
   getStats: (userId: string) => { total: number; has: number; missing: number; repeated: number; unmarked: number; repeatedCount: number }
   undo: () => void
 }
@@ -93,6 +108,12 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const [chats, setChats] = useState<Chat[]>([])
   const [messagesByChat, setMessagesByChat] = useState<{ [chatId: string]: Message[] }>({})
   const [chatReads, setChatReads] = useState<{ [chatId: string]: number }>({})
+  // Fase 7
+  const [feedEvents, setFeedEvents] = useState<FeedEvent[]>([])
+  const [reactions, setReactions] = useState<Reaction[]>([])
+  const [comments, setComments] = useState<FeedComment[]>([])
+  const [achievements, setAchievements] = useState<UserAchievement[]>([])
+  const messagesSentRef = useRef<number>(0)
   const [isInitialized, setIsInitialized] = useState(false)
   const [viewingUserId, setViewingUserId] = useState<string | null>(null)
   const [undoHistory, setUndoHistory] = useState<UndoSnapshot[]>([])
@@ -222,7 +243,48 @@ export function UserProvider({ children }: { children: ReactNode }) {
       setChats(fresh)
     })
 
-    return () => { unsubNotif(); unsubMsg(); unsubChats() }
+    // ── Fase 7: feed, reactions, achievements ───────────────
+    fetchFeedEvents(80).then(setFeedEvents)
+    fetchUserAchievements().then(setAchievements)
+    // Reacciones del feed (las cargamos para todos los eventos visibles)
+    fetchFeedEvents(80).then(async (events) => {
+      if (events.length > 0) {
+        const rx = await fetchReactions('event', events.map(e => e.id))
+        setReactions(prev => {
+          // Mantener reacciones de mensajes existentes
+          const msgRx = prev.filter(r => r.targetType === 'message')
+          return [...rx, ...msgRx]
+        })
+      }
+    })
+
+    const unsubFeed = subscribeToFeed(async () => {
+      const fresh = await fetchFeedEvents(80)
+      setFeedEvents(fresh)
+    })
+    const unsubReact = subscribeToReactions(async () => {
+      const events = await fetchFeedEvents(80)
+      const eventRx = events.length > 0 ? await fetchReactions('event', events.map(e => e.id)) : []
+      // Cargar reacciones de mensajes visibles
+      const allMsgIds: string[] = []
+      Object.values(messagesByChat).forEach(list => list.forEach(m => allMsgIds.push(m.id)))
+      const msgRx = allMsgIds.length > 0 ? await fetchReactions('message', allMsgIds) : []
+      setReactions([...eventRx, ...msgRx])
+    })
+    const unsubComments = subscribeToComments(async () => {
+      // Refrescar comments. Cargamos solo de eventos visibles
+      const events = await fetchFeedEvents(80)
+      if (events.length > 0) {
+        const fresh = await fetchComments(events.map(e => e.id))
+        setComments(fresh)
+      }
+    })
+    const unsubAch = subscribeToAchievements(async () => {
+      const fresh = await fetchUserAchievements()
+      setAchievements(fresh)
+    })
+
+    return () => { unsubNotif(); unsubMsg(); unsubChats(); unsubFeed(); unsubReact(); unsubComments(); unsubAch() }
   }, [isInitialized, isOnline, activeUserId])
 
   // ── Persistence ───────────────────────────────────────────
@@ -344,7 +406,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
           ...prev[activeUserId]?.[sectionCode],
           [stickerNumber]: {
             state,
-            count: count ?? (state === 'repeated' ? 2 : state === 'has' ? 1 : 0)
+            count: count ?? (state === 'has' ? 1 : 0)
           }
         }
       }
@@ -352,49 +414,49 @@ export function UserProvider({ children }: { children: ReactNode }) {
   }, [activeUserId, saveUndoSnapshot])
 
   const cycleStickerState = useCallback((sectionCode: string, stickerNumber: string) => {
-  if (!activeUserId) return
-  saveUndoSnapshot()
-  pendingAlbumSaves.current.add(activeUserId)
-  setAlbums(prev => {
-    const cur = prev[activeUserId]?.[sectionCode]?.[stickerNumber]
-    const curState = cur?.state || 'unmarked'
-    const order: StickerState[] = ['unmarked', 'has', 'missing']
-    const idx = order.indexOf(curState as any)
-    const next = order[(idx + 1) % order.length]
-    const nextCount = next === 'has' ? 1 : 0
-    return {
-      ...prev,
-      [activeUserId]: {
-        ...prev[activeUserId],
-        [sectionCode]: {
-          ...prev[activeUserId]?.[sectionCode],
-          [stickerNumber]: { state: next, count: nextCount }
+    if (!activeUserId) return
+    saveUndoSnapshot()
+    pendingAlbumSaves.current.add(activeUserId)
+    setAlbums(prev => {
+      const cur = prev[activeUserId]?.[sectionCode]?.[stickerNumber]
+      const curState = cur?.state || 'unmarked'
+      const order: StickerState[] = ['unmarked', 'has', 'missing']
+      const idx = order.indexOf(curState as any)
+      const next = order[(idx === -1 ? 0 : (idx + 1) % order.length)]
+      const nextCount = next === 'has' ? 1 : 0
+      return {
+        ...prev,
+        [activeUserId]: {
+          ...prev[activeUserId],
+          [sectionCode]: {
+            ...prev[activeUserId]?.[sectionCode],
+            [stickerNumber]: { state: next, count: nextCount }
+          }
         }
       }
-    }
-  })
-}, [activeUserId, saveUndoSnapshot])
+    })
+  }, [activeUserId, saveUndoSnapshot])
 
   const updateStickerCount = useCallback((sectionCode: string, stickerNumber: string, delta: number) => {
-  if (!activeUserId) return
-  saveUndoSnapshot()
-  pendingAlbumSaves.current.add(activeUserId)
-  setAlbums(prev => {
-    const cur = prev[activeUserId]?.[sectionCode]?.[stickerNumber]
-    if (cur?.state !== 'has') return prev
-    const newCount = Math.max(1, cur.count + delta)
-    return {
-      ...prev,
-      [activeUserId]: {
-        ...prev[activeUserId],
-        [sectionCode]: {
-          ...prev[activeUserId]?.[sectionCode],
-          [stickerNumber]: { state: 'has', count: newCount }
+    if (!activeUserId) return
+    saveUndoSnapshot()
+    pendingAlbumSaves.current.add(activeUserId)
+    setAlbums(prev => {
+      const cur = prev[activeUserId]?.[sectionCode]?.[stickerNumber]
+      if (cur?.state !== 'has') return prev
+      const newCount = Math.max(1, cur.count + delta)
+      return {
+        ...prev,
+        [activeUserId]: {
+          ...prev[activeUserId],
+          [sectionCode]: {
+            ...prev[activeUserId]?.[sectionCode],
+            [stickerNumber]: { state: 'has', count: newCount }
+          }
         }
       }
-    }
-  })
-}, [activeUserId, saveUndoSnapshot])
+    })
+  }, [activeUserId, saveUndoSnapshot])
 
   const markAllSection = useCallback((sectionCode: string, state: StickerState) => {
     if (!activeUserId) return
@@ -405,7 +467,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
     setAlbums(prev => {
       const newSection: { [key: string]: { state: StickerState; count: number } } = {}
       for (let i = section.startNumber; i < section.startNumber + section.stickerCount; i++) {
-        newSection[i.toString()] = { state, count: state === 'repeated' ? 2 : state === 'has' ? 1 : 0 }
+        newSection[i.toString()] = { state, count: state === 'has' ? 1 : 0 }
       }
       return { ...prev, [activeUserId]: { ...prev[activeUserId], [sectionCode]: newSection } }
     })
@@ -454,8 +516,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
         const [sc, num] = sticker.split('-')
         if (newAlbums[fromUserId]?.[sc]?.[num]) {
           const c = newAlbums[fromUserId][sc][num]
-const nc = Math.max(1, c.count - 1)
-newAlbums[fromUserId][sc][num] = { state: 'has', count: nc }
+          const nc = Math.max(1, c.count - 1)
+          newAlbums[fromUserId][sc][num] = { state: 'has', count: nc }
         }
         if (!newAlbums[toUserId]) newAlbums[toUserId] = {}
         if (!newAlbums[toUserId][sc]) newAlbums[toUserId][sc] = {}
@@ -465,12 +527,12 @@ newAlbums[fromUserId][sc][num] = { state: 'has', count: nc }
         const [sc, num] = sticker.split('-')
         if (newAlbums[toUserId]?.[sc]?.[num]) {
           const c = newAlbums[toUserId][sc][num]
-          const nc = c.count - 1
-          newAlbums[toUserId][sc][num] = nc <= 1 ? { state: 'has', count: 1 } : { state: 'repeated', count: nc }
+          const nc = Math.max(1, c.count - 1)
+          newAlbums[toUserId][sc][num] = { state: 'has', count: nc }
         }
-        const c = newAlbums[toUserId][sc][num]
-const nc = Math.max(1, c.count - 1)
-newAlbums[toUserId][sc][num] = { state: 'has', count: nc }
+        if (!newAlbums[fromUserId]) newAlbums[fromUserId] = {}
+        if (!newAlbums[fromUserId][sc]) newAlbums[fromUserId][sc] = {}
+        newAlbums[fromUserId][sc][num] = { state: 'has', count: 1 }
       }
       if (isOnline) {
         saveAlbum(fromUserId, newAlbums[fromUserId])
@@ -504,7 +566,27 @@ newAlbums[toUserId][sc][num] = { state: 'has', count: nc }
   const completeTrade = useCallback((tradeId: string) => {
     setTrades(prev => prev.map(t => t.id === tradeId ? { ...t, completed: true, status: 'completed' as TradeStatus } : t))
     if (isOnline) updateTradeStatus(tradeId, 'completed')
-  }, [isOnline])
+    // Crear evento en feed
+    const trade = trades.find(t => t.id === tradeId)
+    if (trade && activeUserId) {
+      const otherId = trade.fromUserId === activeUserId ? trade.toUserId : trade.fromUserId
+      const otherUser = users.find(u => u.id === otherId)
+      const myName = users.find(u => u.id === activeUserId)?.name || ''
+      if (isOnline) {
+        const ev: FeedEvent = {
+          id: `ev_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          userId: activeUserId,
+          type: 'trade_done',
+          title: `Trade completado con ${otherUser?.name || 'alguien'} 🤝`,
+          description: `${trade.givenStickers.length} ↔ ${trade.receivedStickers.length} estampas`,
+          data: { tradeId, otherId, given: trade.givenStickers.length, received: trade.receivedStickers.length },
+          createdAt: Date.now(),
+        }
+        setFeedEvents(prev => [ev, ...prev])
+        createFeedEvent(ev)
+      }
+    }
+  }, [isOnline, trades, activeUserId, users])
 
   const markNotifRead = useCallback((id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))
@@ -542,6 +624,7 @@ newAlbums[toUserId][sc][num] = { state: 'has', count: nc }
 
   const sendMessage = useCallback(async (chatId: string, text: string, imageUrl?: string) => {
     if (!activeUserId || !text.trim()) return
+    messagesSentRef.current = messagesSentRef.current + 1
     const msg: Message = {
       id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       chatId, fromUserId: activeUserId,
@@ -631,13 +714,13 @@ newAlbums[toUserId][sc][num] = { state: 'has', count: nc }
       if (sd) {
         for (const [, s] of Object.entries(sd)) {
           switch (s.state) {
-  case 'has':
-    has++
-    if (s.count >= 2) { repeated++; repeatedCount += s.count }
-    break
-  case 'missing': missing++; break
-  case 'unmarked': unmarked++; break
-}
+            case 'has':
+              has++
+              if (s.count >= 2) { repeated++; repeatedCount += s.count }
+              break
+            case 'missing': missing++; break
+            case 'unmarked': unmarked++; break
+          }
         }
       }
     }
@@ -652,6 +735,137 @@ newAlbums[toUserId][sc][num] = { state: 'has', count: nc }
     setAlbums(prev => ({ ...prev, [activeUserId]: snap.album }))
     setUndoHistory([])
   }, [undoHistory, activeUserId])
+
+  // ════════════════════════════════════════════════════════
+  // FASE 7: Feed, reactions, achievements
+  // ════════════════════════════════════════════════════════
+
+  const createFeedEventLocal = useCallback(async (type: FeedEventType, title: string, description?: string, data?: any) => {
+    if (!activeUserId) return
+    const ev: FeedEvent = {
+      id: `ev_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      userId: activeUserId,
+      type, title, description, data,
+      createdAt: Date.now(),
+    }
+    setFeedEvents(prev => [ev, ...prev])
+    if (isOnline) await createFeedEvent(ev)
+  }, [activeUserId, isOnline])
+
+  const toggleReactionOnEvent = useCallback(async (eventId: string, emoji: string) => {
+    if (!activeUserId || !isOnline) return
+    // Optimistic
+    const existing = reactions.find(r =>
+      r.targetType === 'event' && r.targetId === eventId &&
+      r.userId === activeUserId && r.emoji === emoji
+    )
+    if (existing) {
+      setReactions(prev => prev.filter(r => r.id !== existing.id))
+    } else {
+      const optimistic: Reaction = {
+        id: `tmp_${Date.now()}`, targetType: 'event', targetId: eventId,
+        userId: activeUserId, emoji, createdAt: Date.now(),
+      }
+      setReactions(prev => [...prev, optimistic])
+    }
+    await toggleReactionRemote('event', eventId, activeUserId, emoji)
+  }, [activeUserId, isOnline, reactions])
+
+  const toggleReactionOnMessage = useCallback(async (messageId: string, emoji: string) => {
+    if (!activeUserId || !isOnline) return
+    const existing = reactions.find(r =>
+      r.targetType === 'message' && r.targetId === messageId &&
+      r.userId === activeUserId && r.emoji === emoji
+    )
+    if (existing) {
+      setReactions(prev => prev.filter(r => r.id !== existing.id))
+    } else {
+      const optimistic: Reaction = {
+        id: `tmp_${Date.now()}`, targetType: 'message', targetId: messageId,
+        userId: activeUserId, emoji, createdAt: Date.now(),
+      }
+      setReactions(prev => [...prev, optimistic])
+    }
+    await toggleReactionRemote('message', messageId, activeUserId, emoji)
+  }, [activeUserId, isOnline, reactions])
+
+  const postComment = useCallback(async (eventId: string, text: string) => {
+    if (!activeUserId || !text.trim()) return
+    const c: FeedComment = {
+      id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      eventId, userId: activeUserId, text: text.trim(), createdAt: Date.now(),
+    }
+    setComments(prev => [...prev, c])
+    if (isOnline) await addCommentRemote(c)
+  }, [activeUserId, isOnline])
+
+  const loadCommentsFor = useCallback(async (eventId: string) => {
+    if (!isOnline) return
+    const fresh = await fetchComments([eventId])
+    setComments(prev => {
+      // Reemplazar los de este evento
+      const others = prev.filter(c => c.eventId !== eventId)
+      return [...others, ...fresh]
+    })
+  }, [isOnline])
+
+  // ── Auto-check achievements ──────────────────────────────
+  const checkAndUnlockAchievements = useCallback(async () => {
+    if (!activeUserId) return
+    const stats = getStats(activeUserId)
+
+    // Países completados
+    const album = albums[activeUserId] || {}
+    let countriesCompleted = 0
+    for (const section of ALBUM_SECTIONS) {
+      const data = album[section.code] || {}
+      let count = 0
+      for (let i = section.startNumber; i < section.startNumber + section.stickerCount; i++) {
+        const s = data[i.toString()]
+        if (s?.state === 'has') count++
+      }
+      if (count === section.stickerCount && section.stickerCount > 0) countriesCompleted++
+    }
+
+    const tradesCompleted = trades.filter(t => t.status === 'completed' && (t.fromUserId === activeUserId || t.toUserId === activeUserId)).length
+
+    const ctx: AchievementContext = {
+      totalHas: stats.has,
+      totalRepeated: stats.repeated,
+      countriesCompleted,
+      tradesCompleted,
+      messagesSent: messagesSentRef.current,
+      streakDays: 1, // se calcula simple para no agregar más estado
+      albumTotal: stats.total,
+    }
+
+    const alreadyUnlocked = achievements.filter(a => a.userId === activeUserId).map(a => a.achievementId)
+    const newOnes = findNewlyUnlocked(ctx, alreadyUnlocked)
+
+    for (const ach of newOnes) {
+      const userAch: UserAchievement = {
+        userId: activeUserId, achievementId: ach.id, unlockedAt: Date.now(),
+      }
+      setAchievements(prev => [...prev, userAch])
+      if (isOnline) {
+        await unlockAchievementRemote(activeUserId, ach.id)
+        // Crear evento en feed
+        await createFeedEventLocal(
+          'achievement',
+          `Desbloqueó: ${ach.name}`,
+          ach.description,
+          { achievementId: ach.id }
+        )
+      }
+    }
+  }, [activeUserId, albums, trades, achievements, isOnline, getStats, createFeedEventLocal])
+
+  // Trigger check después de cada cambio relevante
+  useEffect(() => {
+    if (!isInitialized || !activeUserId) return
+    const timeout = setTimeout(() => { checkAndUnlockAchievements() }, 500)
+    return () => clearTimeout(timeout)
+  }, [albums, trades, isInitialized, activeUserId, checkAndUnlockAchievements])
 
   if (!isInitialized) {
     return (
@@ -674,6 +888,8 @@ newAlbums[toUserId][sc][num] = { state: 'has', count: nc }
       loadChatMessages, sendMessage, deleteMessage, markChatRead,
       setTyping, clearTyping, getOrCreateDM, unreadCountForChat,
       uploadAvatar, uploadChatImage,
+      feedEvents, reactions, comments, achievements,
+      toggleReactionOnEvent, toggleReactionOnMessage, postComment, loadCommentsFor,
       getStats, undo,
     }}>
       {children}

@@ -2,7 +2,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Home, BookOpen, ArrowLeftRight, Users, Undo2, Save, CheckCircle, LogOut, Bell, ShieldCheck, MessageSquare, Search } from 'lucide-react'
+import { Home, BookOpen, ArrowLeftRight, Users, Undo2, Save, CheckCircle, LogOut, Bell, ShieldCheck, MessageSquare, Search, Sparkles } from 'lucide-react'
 import { TabType } from '@/lib/types'
 import { useUser } from '@/lib/user-context'
 import { Dashboard } from './dashboard'
@@ -10,6 +10,7 @@ import { AlbumView } from './album-view'
 import { TradeView } from './trade-view'
 import { UsersView } from './users-view'
 import { ChatView } from './chat-view'
+import { FeedView } from './feed-view'
 import { ViewingUserModal } from './viewing-user-modal'
 import { NotificationsPanel } from './notifications-panel'
 import { GlobalSearch } from './global-search'
@@ -20,6 +21,7 @@ const TABS: { id: TabType; label: string; icon: typeof Home }[] = [
   { id: 'home', label: 'Inicio', icon: Home },
   { id: 'album', label: 'Album', icon: BookOpen },
   { id: 'trade', label: 'Trade', icon: ArrowLeftRight },
+  { id: 'feed', label: 'Feed', icon: Sparkles },
   { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'users', label: 'Usuarios', icon: Users },
 ]
@@ -152,6 +154,7 @@ export function MainApp({ onSignOut }: { onSignOut: () => void }) {
         {activeTab === 'home' && <Dashboard />}
         {activeTab === 'album' && <AlbumView />}
         {activeTab === 'trade' && <TradeView />}
+        {activeTab === 'feed' && <FeedView />}
         {activeTab === 'chat' && <ChatView />}
         {activeTab === 'users' && <UsersView />}
       </main>

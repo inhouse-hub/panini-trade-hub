@@ -1,7 +1,7 @@
 // lib/supabase.ts — REEMPLAZA el archivo existente
 
 import { createClient } from '@supabase/supabase-js'
-import { User, UserAlbum, TradeRecord, Notification, Chat, Message, TypingIndicator } from './types'
+import { User, UserAlbum, TradeRecord, Notification, Chat, Message, TypingIndicator, FeedEvent, Reaction, FeedComment, UserAchievement } from './types'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
@@ -338,6 +338,146 @@ export function subscribeToUsers(callback: () => void) {
   if (!supabase) return () => {}
   const channel = supabase.channel('users-ch').on('postgres_changes', {
     event: '*', schema: 'public', table: 'users'
+  }, callback).subscribe()
+  return () => { supabase.removeChannel(channel) }
+}
+
+// ═══════════════════════════════════════════════════════════
+// FASE 7: Social features
+// ═══════════════════════════════════════════════════════════
+
+// ─── Feed events ────────────────────────────────────────────
+
+export async function fetchFeedEvents(limit = 50): Promise<FeedEvent[]> {
+  if (!supabase) return []
+  const { data, error } = await supabase.from('feed_events')
+    .select('*').order('created_at', { ascending: false }).limit(limit)
+  if (error) { console.error('fetchFeedEvents:', error); return [] }
+  return (data || []).map((e: any) => ({
+    id: e.id, userId: e.user_id, type: e.type, title: e.title,
+    description: e.description, data: e.data, createdAt: e.created_at,
+  }))
+}
+
+export async function createFeedEvent(ev: FeedEvent): Promise<void> {
+  if (!supabase) return
+  const { error } = await supabase.from('feed_events').insert({
+    id: ev.id, user_id: ev.userId, type: ev.type, title: ev.title,
+    description: ev.description, data: ev.data || {}, created_at: ev.createdAt,
+  })
+  if (error) console.error('createFeedEvent:', error)
+}
+
+// ─── Reactions ──────────────────────────────────────────────
+
+export async function fetchReactions(targetType: 'event' | 'message', targetIds: string[]): Promise<Reaction[]> {
+  if (!supabase || targetIds.length === 0) return []
+  const { data, error } = await supabase.from('reactions')
+    .select('*').eq('target_type', targetType).in('target_id', targetIds)
+  if (error) { console.error('fetchReactions:', error); return [] }
+  return (data || []).map((r: any) => ({
+    id: r.id, targetType: r.target_type, targetId: r.target_id,
+    userId: r.user_id, emoji: r.emoji, createdAt: r.created_at,
+  }))
+}
+
+export async function toggleReaction(
+  targetType: 'event' | 'message',
+  targetId: string,
+  userId: string,
+  emoji: string
+): Promise<{ added: boolean }> {
+  if (!supabase) return { added: false }
+  // Buscar si ya existe
+  const { data: existing } = await supabase.from('reactions')
+    .select('id')
+    .eq('target_type', targetType).eq('target_id', targetId)
+    .eq('user_id', userId).eq('emoji', emoji)
+    .maybeSingle()
+  if (existing) {
+    await supabase.from('reactions').delete().eq('id', existing.id)
+    return { added: false }
+  } else {
+    const id = `r_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+    await supabase.from('reactions').insert({
+      id, target_type: targetType, target_id: targetId,
+      user_id: userId, emoji, created_at: Date.now(),
+    })
+    return { added: true }
+  }
+}
+
+// ─── Comments ───────────────────────────────────────────────
+
+export async function fetchComments(eventIds: string[]): Promise<FeedComment[]> {
+  if (!supabase || eventIds.length === 0) return []
+  const { data, error } = await supabase.from('feed_comments')
+    .select('*').in('event_id', eventIds).order('created_at', { ascending: true })
+  if (error) { console.error('fetchComments:', error); return [] }
+  return (data || []).map((c: any) => ({
+    id: c.id, eventId: c.event_id, userId: c.user_id, text: c.text, createdAt: c.created_at,
+  }))
+}
+
+export async function addComment(c: FeedComment): Promise<void> {
+  if (!supabase) return
+  const { error } = await supabase.from('feed_comments').insert({
+    id: c.id, event_id: c.eventId, user_id: c.userId, text: c.text, created_at: c.createdAt,
+  })
+  if (error) console.error('addComment:', error)
+}
+
+// ─── Achievements ───────────────────────────────────────────
+
+export async function fetchUserAchievements(userId?: string): Promise<UserAchievement[]> {
+  if (!supabase) return []
+  let q = supabase.from('user_achievements').select('*')
+  if (userId) q = q.eq('user_id', userId)
+  const { data, error } = await q
+  if (error) { console.error('fetchUserAchievements:', error); return [] }
+  return (data || []).map((a: any) => ({
+    userId: a.user_id, achievementId: a.achievement_id, unlockedAt: a.unlocked_at,
+  }))
+}
+
+export async function unlockAchievement(userId: string, achievementId: string): Promise<void> {
+  if (!supabase) return
+  const { error } = await supabase.from('user_achievements').insert({
+    user_id: userId, achievement_id: achievementId, unlocked_at: Date.now(),
+  })
+  if (error && !error.message.includes('duplicate')) console.error('unlockAchievement:', error)
+}
+
+// ─── Realtime subscriptions ────────────────────────────────
+
+export function subscribeToFeed(callback: () => void) {
+  if (!supabase) return () => {}
+  const channel = supabase.channel('feed-ch').on('postgres_changes', {
+    event: '*', schema: 'public', table: 'feed_events'
+  }, callback).subscribe()
+  return () => { supabase.removeChannel(channel) }
+}
+
+export function subscribeToReactions(callback: () => void) {
+  if (!supabase) return () => {}
+  const channel = supabase.channel('reactions-ch').on('postgres_changes', {
+    event: '*', schema: 'public', table: 'reactions'
+  }, callback).subscribe()
+  return () => { supabase.removeChannel(channel) }
+}
+
+export function subscribeToComments(callback: () => void) {
+  if (!supabase) return () => {}
+  const channel = supabase.channel('comments-ch').on('postgres_changes', {
+    event: '*', schema: 'public', table: 'feed_comments'
+  }, callback).subscribe()
+  return () => { supabase.removeChannel(channel) }
+}
+
+export function subscribeToAchievements(callback: () => void) {
+  if (!supabase) return () => {}
+  const channel = supabase.channel('ach-ch').on('postgres_changes', {
+    event: '*', schema: 'public', table: 'user_achievements'
   }, callback).subscribe()
   return () => { supabase.removeChannel(channel) }
 }

@@ -34,7 +34,7 @@ export function TradeView() {
       if (!data) continue
       for (const num in data) {
         const code = `${section.code}-${num}`
-        if (data[num].state === 'repeated' && data[num].count > 0) rep.push(code)
+        if (data[num].state === 'has' && data[num].count >= 2) rep.push(code)
         if (data[num].state === 'missing') miss.push(code)
       }
     }
@@ -63,7 +63,7 @@ export function TradeView() {
         for (const num in data) {
           const code = `${section.code}-${num}`
           if (data[num].state === 'missing') theirMissing.add(code)
-          if (data[num].state === 'repeated' && data[num].count > 0) theirRepeated.add(code)
+          if (data[num].state === 'has' && data[num].count >= 2) theirRepeated.add(code)
         }
       }
 
@@ -116,8 +116,8 @@ export function TradeView() {
   }
 
   const submitProposal = () => {
-  if (!proposing || (selectedGive.length === 0 && selectedReceive.length === 0)) return
-  proposeTrade(proposing.userId, selectedGive, selectedReceive)
+    if (!proposing || (selectedGive.length === 0 && selectedReceive.length === 0)) return
+    proposeTrade(proposing.userId, selectedGive, selectedReceive)
     setProposing(null)
     setSelectedGive([])
     setSelectedReceive([])
@@ -158,8 +158,9 @@ export function TradeView() {
     }
 
     const canSubmit = selectedGive.length > 0 || selectedReceive.length > 0
-const isGift = selectedGive.length > 0 && selectedReceive.length === 0
-const isRequest = selectedGive.length === 0 && selectedReceive.length > 0
+    const isGift = selectedGive.length > 0 && selectedReceive.length === 0
+    const isRequest = selectedGive.length === 0 && selectedReceive.length > 0
+    const isUnbalanced = selectedGive.length > 0 && selectedReceive.length > 0 && selectedGive.length !== selectedReceive.length
 
     return (
       <div className="space-y-4">
@@ -193,23 +194,23 @@ const isRequest = selectedGive.length === 0 && selectedReceive.length > 0
             </div>
           </div>
           {isGift && (
-  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gold/20 text-xs text-green-400">
-    <Sparkles className="w-3.5 h-3.5" />
-    <span>🎁 Le regalas {selectedGive.length} estampa{selectedGive.length !== 1 ? 's' : ''}</span>
-  </div>
-)}
-{isRequest && (
-  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gold/20 text-xs text-cyan-400">
-    <Sparkles className="w-3.5 h-3.5" />
-    <span>🙏 Le pides {selectedReceive.length} estampa{selectedReceive.length !== 1 ? 's' : ''} como regalo</span>
-  </div>
-)}
-{selectedGive.length > 0 && selectedReceive.length > 0 && selectedGive.length !== selectedReceive.length && (
-  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gold/20 text-xs text-amber-400">
-    <AlertCircle className="w-3.5 h-3.5" />
-    <span>Trade desigual ({selectedGive.length} por {selectedReceive.length}) — válido entre primos 😎</span>
-  </div>
-)}
+            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gold/20 text-xs text-green-400">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>🎁 Le regalas {selectedGive.length} estampa{selectedGive.length !== 1 ? 's' : ''}</span>
+            </div>
+          )}
+          {isRequest && (
+            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gold/20 text-xs text-cyan-400">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>🙏 Le pides {selectedReceive.length} estampa{selectedReceive.length !== 1 ? 's' : ''} como regalo</span>
+            </div>
+          )}
+          {isUnbalanced && (
+            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gold/20 text-xs text-amber-400">
+              <AlertCircle className="w-3.5 h-3.5" />
+              <span>Trade desigual ({selectedGive.length} por {selectedReceive.length}) — válido entre primos 😎</span>
+            </div>
+          )}
         </div>
 
         {/* Selector: lo que doy (mis repetidas que él necesita) */}
@@ -281,18 +282,18 @@ const isRequest = selectedGive.length === 0 && selectedReceive.length > 0
         {/* CTA */}
         <div className="sticky bottom-20 bg-background/80 backdrop-blur-md -mx-4 px-4 py-3 border-t border-border">
           <button
-  onClick={submitProposal}
-  disabled={!canSubmit}
-  className={cn(
-    'w-full py-3 rounded-xl font-semibold transition-all flex items-center justify-center gap-2',
-    canSubmit
-      ? 'bg-gold text-background hover:bg-gold/90'
-      : 'bg-muted text-muted-foreground cursor-not-allowed'
-  )}
->
-  <Send className="w-4 h-4" />
-  {isGift ? 'Regalar estampas' : isRequest ? 'Pedir regalo' : 'Enviar propuesta'}
-</button>
+            onClick={submitProposal}
+            disabled={!canSubmit}
+            className={cn(
+              'w-full py-3 rounded-xl font-semibold transition-all flex items-center justify-center gap-2',
+              canSubmit
+                ? 'bg-gold text-background hover:bg-gold/90'
+                : 'bg-muted text-muted-foreground cursor-not-allowed'
+            )}
+          >
+            <Send className="w-4 h-4" />
+            {isGift ? 'Regalar estampas' : isRequest ? 'Pedir regalo' : 'Enviar propuesta'}
+          </button>
           {canSubmit && (
             <p className="text-xs text-muted-foreground text-center mt-2">
               {targetUser.name} recibirá una notificación
@@ -377,51 +378,51 @@ const isRequest = selectedGive.length === 0 && selectedReceive.length > 0
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-  <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-2">
-    <div className="flex items-baseline justify-between mb-1.5">
-      <p className="text-orange-400 font-semibold">Le puedes dar</p>
-      <p className="font-mono text-lg text-orange-400">{m.canGive.length}</p>
-    </div>
-    {m.canGive.length > 0 ? (
-      <div className="flex flex-wrap gap-1">
-        {m.canGive.slice(0, 15).map(s => (
-          <span key={s} className="px-1.5 py-0.5 bg-orange-500/20 text-orange-300 font-mono text-[10px] rounded border border-orange-500/30">
-            {s}
-          </span>
-        ))}
-        {m.canGive.length > 15 && (
-          <span className="px-1.5 py-0.5 text-orange-400/60 font-mono text-[10px]">
-            +{m.canGive.length - 15} más
-          </span>
-        )}
-      </div>
-    ) : (
-      <p className="text-orange-400/40 text-[10px] italic">ninguna</p>
-    )}
-  </div>
-  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-2">
-    <div className="flex items-baseline justify-between mb-1.5">
-      <p className="text-green-400 font-semibold">Te puede dar</p>
-      <p className="font-mono text-lg text-green-400">{m.canReceive.length}</p>
-    </div>
-    {m.canReceive.length > 0 ? (
-      <div className="flex flex-wrap gap-1">
-        {m.canReceive.slice(0, 15).map(s => (
-          <span key={s} className="px-1.5 py-0.5 bg-green-500/20 text-green-300 font-mono text-[10px] rounded border border-green-500/30">
-            {s}
-          </span>
-        ))}
-        {m.canReceive.length > 15 && (
-          <span className="px-1.5 py-0.5 text-green-400/60 font-mono text-[10px]">
-            +{m.canReceive.length - 15} más
-          </span>
-        )}
-      </div>
-    ) : (
-      <p className="text-green-400/40 text-[10px] italic">ninguna</p>
-    )}
-  </div>
-</div>
+                  <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-2">
+                    <div className="flex items-baseline justify-between mb-1.5">
+                      <p className="text-orange-400 font-semibold">Le puedes dar</p>
+                      <p className="font-mono text-lg text-orange-400">{m.canGive.length}</p>
+                    </div>
+                    {m.canGive.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {m.canGive.slice(0, 15).map(s => (
+                          <span key={s} className="px-1.5 py-0.5 bg-orange-500/20 text-orange-300 font-mono text-[10px] rounded border border-orange-500/30">
+                            {s}
+                          </span>
+                        ))}
+                        {m.canGive.length > 15 && (
+                          <span className="px-1.5 py-0.5 text-orange-400/60 font-mono text-[10px]">
+                            +{m.canGive.length - 15} más
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-orange-400/40 text-[10px] italic">ninguna</p>
+                    )}
+                  </div>
+                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-2">
+                    <div className="flex items-baseline justify-between mb-1.5">
+                      <p className="text-green-400 font-semibold">Te puede dar</p>
+                      <p className="font-mono text-lg text-green-400">{m.canReceive.length}</p>
+                    </div>
+                    {m.canReceive.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {m.canReceive.slice(0, 15).map(s => (
+                          <span key={s} className="px-1.5 py-0.5 bg-green-500/20 text-green-300 font-mono text-[10px] rounded border border-green-500/30">
+                            {s}
+                          </span>
+                        ))}
+                        {m.canReceive.length > 15 && (
+                          <span className="px-1.5 py-0.5 text-green-400/60 font-mono text-[10px]">
+                            +{m.canReceive.length - 15} más
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-green-400/40 text-[10px] italic">ninguna</p>
+                    )}
+                  </div>
+                </div>
 
                 <button
                   onClick={() => startProposal(m.userId)}

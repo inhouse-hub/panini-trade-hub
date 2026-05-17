@@ -1,6 +1,6 @@
-// lib/types.ts — REEMPLAZA el archivo existente
+// lib/types.ts — REEMPLAZA
 
-export type StickerState = 'unmarked' | 'has' | 'repeated' | 'missing'
+export type StickerState = 'unmarked' | 'has' | 'missing'
 
 export interface StickerData {
   state: StickerState
@@ -19,7 +19,7 @@ export interface User {
   id: string
   name: string
   avatar: string
-  avatarUrl?: string  // URL de foto subida (opcional, sobreescribe el emoji)
+  avatarUrl?: string
   pin: string
   isAdmin?: boolean
   createdAt: number
@@ -56,7 +56,14 @@ export interface TradeMatch {
   mutualPossible: number
 }
 
-export type NotificationType = 'trade_proposal' | 'trade_accepted' | 'trade_rejected' | 'admin_action' | 'new_message'
+export type NotificationType =
+  | 'trade_proposal'
+  | 'trade_accepted'
+  | 'trade_rejected'
+  | 'admin_action'
+  | 'new_message'
+  | 'achievement'
+  | 'milestone'
 
 export interface Notification {
   id: string
@@ -98,5 +105,46 @@ export interface TypingIndicator {
   updatedAt: number
 }
 
+// ─── Fase 7: Social ───────────────────────────────────────
+
+export type FeedEventType =
+  | 'sticker_milestone'   // Llegó a X estampas
+  | 'section_complete'    // Completó un país
+  | 'trade_done'          // Completó un trade
+  | 'achievement'         // Desbloqueó un logro
+
+export interface FeedEvent {
+  id: string
+  userId: string
+  type: FeedEventType
+  title: string
+  description?: string
+  data?: any
+  createdAt: number
+}
+
+export interface Reaction {
+  id: string
+  targetType: 'event' | 'message'
+  targetId: string
+  userId: string
+  emoji: string
+  createdAt: number
+}
+
+export interface FeedComment {
+  id: string
+  eventId: string
+  userId: string
+  text: string
+  createdAt: number
+}
+
+export interface UserAchievement {
+  userId: string
+  achievementId: string
+  unlockedAt: number
+}
+
 export type FilterType = 'all' | 'missing' | 'repeated' | 'complete' | 'unmarked'
-export type TabType = 'home' | 'album' | 'trade' | 'chat' | 'users'
+export type TabType = 'home' | 'album' | 'trade' | 'feed' | 'chat' | 'users'
