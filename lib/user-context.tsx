@@ -355,14 +355,13 @@ export function UserProvider({ children }: { children: ReactNode }) {
   if (!activeUserId) return
   saveUndoSnapshot()
   pendingAlbumSaves.current.add(activeUserId)
-  // Lee el estado actual desde el setter (no del closure) para evitar race conditions
   setAlbums(prev => {
     const cur = prev[activeUserId]?.[sectionCode]?.[stickerNumber]
     const curState = cur?.state || 'unmarked'
-    const order: StickerState[] = ['unmarked', 'has', 'repeated', 'missing']
-    const idx = order.indexOf(curState)
+    const order: StickerState[] = ['unmarked', 'has', 'missing']
+    const idx = order.indexOf(curState as any)
     const next = order[(idx + 1) % order.length]
-    const nextCount = next === 'repeated' ? 2 : next === 'has' ? 1 : 0
+    const nextCount = next === 'has' ? 1 : 0
     return {
       ...prev,
       [activeUserId]: {
@@ -377,12 +376,25 @@ export function UserProvider({ children }: { children: ReactNode }) {
 }, [activeUserId, saveUndoSnapshot])
 
   const updateStickerCount = useCallback((sectionCode: string, stickerNumber: string, delta: number) => {
-    if (!activeUserId || !albums[activeUserId]) return
-    const cur = albums[activeUserId][sectionCode]?.[stickerNumber]
-    if (cur?.state !== 'repeated') return
-    const newCount = Math.max(2, cur.count + delta)
-    updateStickerState(sectionCode, stickerNumber, 'repeated', newCount)
-  }, [activeUserId, albums, updateStickerState])
+  if (!activeUserId) return
+  saveUndoSnapshot()
+  pendingAlbumSaves.current.add(activeUserId)
+  setAlbums(prev => {
+    const cur = prev[activeUserId]?.[sectionCode]?.[stickerNumber]
+    if (cur?.state !== 'has') return prev
+    const newCount = Math.max(1, cur.count + delta)
+    return {
+      ...prev,
+      [activeUserId]: {
+        ...prev[activeUserId],
+        [sectionCode]: {
+          ...prev[activeUserId]?.[sectionCode],
+          [stickerNumber]: { state: 'has', count: newCount }
+        }
+      }
+    }
+  })
+}, [activeUserId, saveUndoSnapshot])
 
   const markAllSection = useCallback((sectionCode: string, state: StickerState) => {
     if (!activeUserId) return
@@ -442,8 +454,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
         const [sc, num] = sticker.split('-')
         if (newAlbums[fromUserId]?.[sc]?.[num]) {
           const c = newAlbums[fromUserId][sc][num]
-          const nc = c.count - 1
-          newAlbums[fromUserId][sc][num] = nc <= 1 ? { state: 'has', count: 1 } : { state: 'repeated', count: nc }
+const nc = Math.max(1, c.count - 1)
+newAlbums[fromUserId][sc][num] = { state: 'has', count: nc }
         }
         if (!newAlbums[toUserId]) newAlbums[toUserId] = {}
         if (!newAlbums[toUserId][sc]) newAlbums[toUserId][sc] = {}
@@ -456,9 +468,9 @@ export function UserProvider({ children }: { children: ReactNode }) {
           const nc = c.count - 1
           newAlbums[toUserId][sc][num] = nc <= 1 ? { state: 'has', count: 1 } : { state: 'repeated', count: nc }
         }
-        if (!newAlbums[fromUserId]) newAlbums[fromUserId] = {}
-        if (!newAlbums[fromUserId][sc]) newAlbums[fromUserId][sc] = {}
-        newAlbums[fromUserId][sc][num] = { state: 'has', count: 1 }
+        const c = newAlbums[toUserId][sc][num]
+const nc = Math.max(1, c.count - 1)
+newAlbums[toUserId][sc][num] = { state: 'has', count: nc }
       }
       if (isOnline) {
         saveAlbum(fromUserId, newAlbums[fromUserId])
@@ -619,11 +631,13 @@ export function UserProvider({ children }: { children: ReactNode }) {
       if (sd) {
         for (const [, s] of Object.entries(sd)) {
           switch (s.state) {
-            case 'has': has++; break
-            case 'missing': missing++; break
-            case 'repeated': repeated++; repeatedCount += s.count; break
-            case 'unmarked': unmarked++; break
-          }
+  case 'has':
+    has++
+    if (s.count >= 2) { repeated++; repeatedCount += s.count }
+    break
+  case 'missing': missing++; break
+  case 'unmarked': unmarked++; break
+}
         }
       }
     }

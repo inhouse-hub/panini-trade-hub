@@ -24,11 +24,6 @@ const stateConfig: Record<StickerState, { bgClass: string; textClass: string; bo
     textClass: 'text-sticker-has',
     borderClass: 'border-sticker-has/60',
   },
-  repeated: {
-    bgClass: 'bg-sticker-repeated/20',
-    textClass: 'text-sticker-repeated',
-    borderClass: 'border-sticker-repeated/60',
-  },
   missing: {
     bgClass: 'bg-sticker-missing/20',
     textClass: 'text-sticker-missing',
@@ -39,7 +34,8 @@ const stateConfig: Record<StickerState, { bgClass: string; textClass: string; bo
 export function StickerCard({ sectionCode, number, state, count }: StickerCardProps) {
   const { cycleStickerState, updateStickerCount } = useUser()
   const [isAnimating, setIsAnimating] = useState(false)
-  const config = stateConfig[state]
+  const config = stateConfig[state] || stateConfig.unmarked
+  const isRepeated = state === 'has' && count >= 2
 
   const handleClick = () => {
     setIsAnimating(true)
@@ -57,7 +53,7 @@ export function StickerCard({ sectionCode, number, state, count }: StickerCardPr
       <button
         onClick={handleClick}
         className={cn(
-          'w-full aspect-square rounded-xl border-2 flex items-center justify-center',
+          'w-full aspect-square rounded-xl border-2 flex items-center justify-center relative',
           'font-mono text-lg font-bold transition-all duration-150',
           'hover:scale-105 active:scale-95',
           config.bgClass,
@@ -67,37 +63,32 @@ export function StickerCard({ sectionCode, number, state, count }: StickerCardPr
         )}
       >
         <span className="font-display text-xl">{number}</span>
-
-        {/* Badge de cantidad arriba a la derecha */}
-        {state === 'repeated' && count > 0 && (
-          <span className="absolute -top-1 -right-1 bg-cyan text-background text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center pointer-events-none">
-            {count}
-          </span>
-        )}
       </button>
 
-      {/* Botones +/- inline cuando está en repetida */}
-      {state === 'repeated' && (
-        <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 z-10">
-          <button
-            onClick={(e) => handleCountChange(e, -1)}
-            disabled={count <= 2}
-            className={cn(
-              'w-5 h-5 flex items-center justify-center rounded-md transition-colors',
-              count <= 2
-                ? 'bg-card/60 text-muted-foreground/40 cursor-not-allowed'
-                : 'bg-card hover:bg-cyan/30 text-foreground border border-cyan/40'
-            )}
-          >
-            <Minus className="w-2.5 h-2.5" />
-          </button>
-          <button
-            onClick={(e) => handleCountChange(e, 1)}
-            className="w-5 h-5 flex items-center justify-center rounded-md bg-card hover:bg-cyan/30 text-foreground border border-cyan/40 transition-colors"
-          >
-            <Plus className="w-2.5 h-2.5" />
-          </button>
-        </div>
+      {/* Botón + arriba a la derecha (solo cuando es 'has') */}
+      {state === 'has' && (
+        <button
+          onClick={(e) => handleCountChange(e, 1)}
+          className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-cyan text-background border-2 border-background shadow-md hover:scale-110 active:scale-95 transition-transform z-10"
+          aria-label="Marcar como repetida o añadir copia"
+        >
+          {isRepeated ? (
+            <span className="font-bold text-[10px] leading-none">R×{count}</span>
+          ) : (
+            <Plus className="w-3 h-3" strokeWidth={3} />
+          )}
+        </button>
+      )}
+
+      {/* Botón − abajo a la derecha (solo cuando ya es repetida) */}
+      {isRepeated && (
+        <button
+          onClick={(e) => handleCountChange(e, -1)}
+          className="absolute -bottom-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full bg-card border-2 border-cyan text-cyan shadow-md hover:scale-110 active:scale-95 transition-transform z-10"
+          aria-label="Quitar una copia"
+        >
+          <Minus className="w-2.5 h-2.5" strokeWidth={3} />
+        </button>
       )}
     </div>
   )
@@ -105,7 +96,7 @@ export function StickerCard({ sectionCode, number, state, count }: StickerCardPr
 
 // Compact sticker for lists
 export function StickerBadge({ sectionCode, number, state }: { sectionCode: string; number: number; state: StickerState }) {
-  const config = stateConfig[state]
+  const config = stateConfig[state] || stateConfig.unmarked
 
   return (
     <span className={cn(
