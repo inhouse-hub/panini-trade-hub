@@ -21,12 +21,13 @@ export function UsersView() {
   const [newName, setNewName] = useState('')
   const [newAvatar, setNewAvatar] = useState(AVATAR_OPTIONS[0])
   const [newPin, setNewPin] = useState('')
+  const [markAsCompleted, setMarkAsCompleted] = useState(true)
   const [currentPin, setCurrentPin] = useState('')
   const [pinError, setPinError] = useState('')
 
   const handleAddUser = () => {
     if (newName.trim()) {
-      addUser(newName.trim(), newAvatar, newPin || '1234')
+      addUser(newName.trim(), newAvatar, newPin || '1234', markAsCompleted)
       resetForm()
       setIsAddingUser(false)
     }
@@ -70,6 +71,7 @@ export function UsersView() {
     setNewName('')
     setNewAvatar(AVATAR_OPTIONS[0])
     setNewPin('')
+    setMarkAsCompleted(true)
     setCurrentPin('')
     setPinError('')
   }
@@ -130,6 +132,23 @@ export function UsersView() {
             <AvatarPicker value={newAvatar} onChange={setNewAvatar} />
             <TextField label="Nombre" value={newName} onChange={setNewName} placeholder="Ingresa el nombre" />
             <TextField label="PIN inicial (4 dígitos)" value={newPin} onChange={setNewPin} placeholder="1234" maxLength={4} numeric />
+
+            {/* Checkbox: marcar todo como tengo */}
+            <label className="flex items-start gap-3 p-3 bg-muted/30 hover:bg-muted/50 border border-border rounded-xl cursor-pointer transition-colors">
+              <input
+                type="checkbox"
+                checked={markAsCompleted}
+                onChange={(e) => setMarkAsCompleted(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-gold cursor-pointer"
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold">Marcar álbum como completado</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Marca las 992 estampas como "tengo". El usuario solo necesitará marcar las que le faltan.
+                </p>
+              </div>
+            </label>
+
             <div className="flex gap-2">
               <button onClick={handleAddUser} disabled={!newName.trim()}
                 className={cn('flex-1 py-2.5 rounded-xl font-semibold transition-colors',

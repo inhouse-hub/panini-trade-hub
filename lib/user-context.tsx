@@ -3,7 +3,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react'
 import { User, UserAlbum, StickerState, TradeRecord, TradeStatus, Notification, NotificationType, Chat, Message, FeedEvent, FeedEventType, Reaction, FeedComment, UserAchievement } from './types'
-import { DEFAULT_USERS, createEmptyAlbum, createRoniAlbum, ALBUM_SECTIONS } from './album-data'
+import { DEFAULT_USERS, createEmptyAlbum, createCompletedAlbum, createRoniAlbum, ALBUM_SECTIONS } from './album-data'
 import { ACHIEVEMENTS, findNewlyUnlocked, AchievementContext } from './achievements'
 import {
   isSupabaseEnabled, fetchUsers, upsertUser, deleteUserRemote,
@@ -56,7 +56,7 @@ interface UserContextType {
   setActiveUser: (userId: string) => void
   signOut: () => void
   setViewingUser: (userId: string | null) => void
-  addUser: (name: string, avatar: string, pin?: string) => void
+  addUser: (name: string, avatar: string, pin?: string, markAsCompleted?: boolean) => void
   updateUser: (userId: string, updates: Partial<Pick<User, 'name' | 'avatar' | 'pin' | 'isAdmin'>>) => void
   deleteUser: (userId: string) => void
   updateStickerState: (sectionCode: string, stickerNumber: string, state: StickerState, count?: number) => void
@@ -359,14 +359,15 @@ export function UserProvider({ children }: { children: ReactNode }) {
     setViewingUserId(userId)
   }, [])
 
-  const addUser = useCallback((name: string, avatar: string, pin: string = '1234') => {
+  const addUser = useCallback((name: string, avatar: string, pin: string = '1234', markAsCompleted: boolean = false) => {
     const id = `user_${Date.now()}`
     const newUser: User = { id, name, avatar, pin, isAdmin: false, createdAt: Date.now() }
+    const initialAlbum = markAsCompleted ? createCompletedAlbum() : createEmptyAlbum()
     setUsers(prev => [...prev, newUser])
-    setAlbums(prev => ({ ...prev, [id]: createEmptyAlbum() }))
+    setAlbums(prev => ({ ...prev, [id]: initialAlbum }))
     if (isOnline) {
       upsertUser(newUser)
-      saveAlbum(id, createEmptyAlbum())
+      saveAlbum(id, initialAlbum)
     }
   }, [isOnline])
 
