@@ -4,7 +4,8 @@
 import { useState, useMemo } from 'react'
 import {
   ArrowRight, ArrowLeftRight, RefreshCw, X, Check, Clock, Send, Inbox,
-  History, Eye, Plus, Minus, Sparkles, Copy, CheckCircle, AlertCircle
+  History, Eye, Plus, Minus, Sparkles, Copy, CheckCircle, AlertCircle,
+  ArrowLeft, Search
 } from 'lucide-react'
 import { useUser } from '@/lib/user-context'
 import { ALBUM_SECTIONS } from '@/lib/album-data'
@@ -16,6 +17,7 @@ export function TradeView() {
   const {
     users, activeUser, activeUserAlbum, getUserAlbum, trades,
     proposeTrade, acceptTrade, rejectTrade, setViewingUser,
+    updateStickerState, updateStickerCount,
   } = useUser()
 
   const [tab, setTab] = useState<TradeTab>('matches')
@@ -23,6 +25,7 @@ export function TradeView() {
   const [selectedGive, setSelectedGive] = useState<string[]>([])
   const [selectedReceive, setSelectedReceive] = useState<string[]>([])
   const [copied, setCopied] = useState(false)
+  const [listView, setListView] = useState<'repeated' | 'missing' | null>(null)
 
   // ── Mis repetidas y faltantes ─────────────────────────────
   const { myRepeated, myMissing } = useMemo(() => {
@@ -304,6 +307,19 @@ export function TradeView() {
     )
   }
 
+  // ═══ Pantalla: Lista detallada de repetidas / faltantes ═══
+  if (listView !== null) {
+    return <DetailedListView
+      type={listView}
+      stickers={listView === 'repeated' ? myRepeated : myMissing}
+      activeUserAlbum={activeUserAlbum}
+      onBack={() => setListView(null)}
+      onUpdate={(sc, num, state, count) => updateStickerState(sc, num, state, count)}
+      onAddRepeated={(sc, num) => updateStickerCount(sc, num, 1)}
+      onRemoveRepeated={(sc, num) => updateStickerCount(sc, num, -1)}
+    />
+  }
+
   // ═══ Vista principal ═══
   return (
     <div className="space-y-4">
@@ -316,22 +332,34 @@ export function TradeView() {
 
       {/* Resumen inventario */}
       <div className="grid grid-cols-2 gap-3">
-        <div className="bg-card/50 border border-sticker-repeated/30 rounded-xl p-3">
+        <button
+          onClick={() => setListView('repeated')}
+          className="bg-card/50 border border-sticker-repeated/30 hover:border-sticker-repeated/60 hover:bg-card rounded-xl p-3 text-left transition-all active:scale-[0.98]"
+        >
           <div className="flex items-center gap-1.5 text-sticker-repeated mb-1">
             <RefreshCw className="w-3.5 h-3.5" />
             <span className="text-xs font-semibold uppercase tracking-wider">Tengo</span>
           </div>
           <p className="font-mono text-2xl font-bold">{myRepeated.length}</p>
-          <p className="text-xs text-muted-foreground">para intercambiar</p>
-        </div>
-        <div className="bg-card/50 border border-sticker-missing/30 rounded-xl p-3">
+          <p className="text-xs text-muted-foreground flex items-center gap-1">
+            para intercambiar
+            <ArrowRight className="w-3 h-3" />
+          </p>
+        </button>
+        <button
+          onClick={() => setListView('missing')}
+          className="bg-card/50 border border-sticker-missing/30 hover:border-sticker-missing/60 hover:bg-card rounded-xl p-3 text-left transition-all active:scale-[0.98]"
+        >
           <div className="flex items-center gap-1.5 text-sticker-missing mb-1">
             <X className="w-3.5 h-3.5" />
             <span className="text-xs font-semibold uppercase tracking-wider">Necesito</span>
           </div>
           <p className="font-mono text-2xl font-bold">{myMissing.length}</p>
-          <p className="text-xs text-muted-foreground">estampas faltantes</p>
-        </div>
+          <p className="text-xs text-muted-foreground flex items-center gap-1">
+            estampas faltantes
+            <ArrowRight className="w-3 h-3" />
+          </p>
+        </button>
       </div>
 
       {/* Compartir lista */}
@@ -624,5 +652,220 @@ function TabBtn({
         </span>
       )}
     </button>
+  )
+}
+
+// ════════════════════════════════════════════════════════════
+// Vista detallada de la lista (repetidas o faltantes)
+// ════════════════════════════════════════════════════════════
+
+interface DetailedListViewProps {
+  type: 'repeated' | 'missing'
+  stickers: string[]
+  activeUserAlbum: any
+  onBack: () => void
+  onUpdate: (sectionCode: string, stickerNumber: string, state: any, count?: number) => void
+  onAddRepeated: (sectionCode: string, stickerNumber: string) => void
+  onRemoveRepeated: (sectionCode: string, stickerNumber: string) => void
+}
+
+function DetailedListView({ type, stickers, activeUserAlbum, onBack, onUpdate, onAddRepeated, onRemoveRepeated }: DetailedListViewProps) {
+  const [filter, setFilter] = useState('')
+  const [copiedList, setCopiedList] = useState(false)
+
+  // Agrupar por sección
+  const grouped = useMemo(() => {
+    const map = new Map<string, string[]>()
+    for (const code of stickers) {
+      const [section, num] = code.split('-')
+      if (!filter || code.toLowerCase().includes(filter.toLowerCase())) {
+        const arr = map.get(section) || []
+        arr.push(num)
+        map.set(section, arr)
+      }
+    }
+    // Ordenar por número dentro de cada sección
+    for (const [section, nums] of map) {
+      nums.sort((a, b) => parseInt(a) - parseInt(b))
+    }
+    return Array.from(map.entries()).sort((a, b) => {
+      const idxA = ALBUM_SECTIONS.findIndex(s => s.code === a[0])
+      const idxB = ALBUM_SECTIONS.findIndex(s => s.code === b[0])
+      return idxA - idxB
+    })
+  }, [stickers, filter])
+
+  const totalShown = useMemo(() => grouped.reduce((acc, [, nums]) => acc + nums.length, 0), [grouped])
+
+  const copyList = async () => {
+    const lines: string[] = []
+    if (type === 'repeated') {
+      lines.push('🔄 Mis repetidas para intercambiar:')
+    } else {
+      lines.push('❌ Estampas que me faltan:')
+    }
+    lines.push('')
+    for (const [section, nums] of grouped) {
+      const sec = ALBUM_SECTIONS.find(s => s.code === section)
+      lines.push(`${sec?.flag || ''} ${section}: ${nums.map(n => `${section}-${n}`).join(', ')}`)
+    }
+    lines.push('')
+    lines.push(`Total: ${totalShown}`)
+    await navigator.clipboard.writeText(lines.join('\n'))
+    setCopiedList(true)
+    setTimeout(() => setCopiedList(false), 2000)
+  }
+
+  const isRepeated = type === 'repeated'
+  const color = isRepeated ? 'sticker-repeated' : 'sticker-missing'
+  const title = isRepeated ? 'Mis repetidas' : 'Me faltan'
+  const subtitle = isRepeated
+    ? 'Tap una para darla en trade · Mantén presionada para agregar repetida'
+    : 'Tap una cuando la recibas en un trade'
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onBack}
+          className="p-2 bg-card hover:bg-muted border border-border rounded-xl transition-colors active:scale-95"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <div className="flex-1">
+          <h2 className={cn('font-display text-2xl tracking-wider', `text-${color}`)}>
+            {isRepeated ? '🔄' : '❌'} {title}
+          </h2>
+          <p className="text-xs text-muted-foreground">{subtitle}</p>
+        </div>
+        <div className={cn('px-3 py-1.5 rounded-xl border', `border-${color}/30 bg-${color}/10`)}>
+          <span className={cn('font-mono font-bold', `text-${color}`)}>{totalShown}</span>
+        </div>
+      </div>
+
+      {/* Buscador */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <input
+          type="text"
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          placeholder="Buscar (ej. MEX, BRA-5, USA)..."
+          className="w-full bg-card/50 border border-border focus:border-gold/50 focus:outline-none rounded-xl pl-10 pr-3 py-2.5 text-sm"
+        />
+      </div>
+
+      {/* Botón copiar lista */}
+      <button
+        onClick={copyList}
+        disabled={totalShown === 0}
+        className={cn(
+          'w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-colors',
+          totalShown === 0
+            ? 'bg-muted text-muted-foreground cursor-not-allowed'
+            : 'bg-gold/10 hover:bg-gold/20 border border-gold/30 text-gold'
+        )}
+      >
+        {copiedList ? <><CheckCircle className="w-4 h-4" />Copiado al portapapeles</> : <><Copy className="w-4 h-4" />Copiar lista para WhatsApp</>}
+      </button>
+
+      {/* Tip de uso */}
+      <div className={cn('p-3 rounded-xl border text-xs', `bg-${color}/5 border-${color}/20`)}>
+        {isRepeated ? (
+          <div className="space-y-1">
+            <p className="font-semibold flex items-center gap-1">💡 Cómo usar esta lista en trades físicos:</p>
+            <p className="text-muted-foreground">• Tap <span className="text-sticker-repeated font-mono">−</span> cuando das una repetida</p>
+            <p className="text-muted-foreground">• Tap <span className="text-sticker-repeated font-mono">+</span> cuando recibes otra copia repetida</p>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <p className="font-semibold flex items-center gap-1">💡 Cómo usar esta lista en trades físicos:</p>
+            <p className="text-muted-foreground">• Tap <span className="text-sticker-has font-mono">✓</span> cuando recibes la estampa y ya no te falta</p>
+          </div>
+        )}
+      </div>
+
+      {/* Lista agrupada por sección */}
+      {grouped.length === 0 ? (
+        <div className="text-center py-12 px-4 bg-card/30 border border-border rounded-2xl">
+          <p className="text-sm font-semibold mb-1">
+            {filter ? 'Sin resultados' : (isRepeated ? '¡Sin repetidas!' : '¡Ya no te falta nada!')}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {filter
+              ? 'Prueba con otro término de búsqueda'
+              : (isRepeated ? 'Cuando consigas una repetida aparecerá aquí' : '¡Felicidades, álbum completo! 🏆')
+            }
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {grouped.map(([section, nums]) => {
+            const sec = ALBUM_SECTIONS.find(s => s.code === section)
+            return (
+              <div key={section} className="bg-card/50 backdrop-blur-sm border border-border rounded-2xl p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">{sec?.flag}</span>
+                  <p className="font-semibold text-sm">{sec?.name}</p>
+                  <span className="ml-auto text-xs font-mono text-muted-foreground">{nums.length}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {nums.map(num => {
+                    const stickerData = activeUserAlbum?.[section]?.[num]
+                    const count = stickerData?.count || 0
+                    return (
+                      <div
+                        key={`${section}-${num}`}
+                        className={cn(
+                          'group relative inline-flex items-center gap-1 pl-2 pr-1 py-1 rounded-lg border text-xs font-mono',
+                          isRepeated
+                            ? 'bg-sticker-repeated/10 border-sticker-repeated/40 text-sticker-repeated'
+                            : 'bg-sticker-missing/10 border-sticker-missing/40 text-sticker-missing'
+                        )}
+                      >
+                        <span className="font-semibold">{section}-{num}</span>
+                        {isRepeated && count >= 2 && (
+                          <span className="text-[10px] opacity-70">×{count}</span>
+                        )}
+                        {isRepeated ? (
+                          <div className="flex items-center gap-0.5 ml-1">
+                            {/* − resta una copia */}
+                            <button
+                              onClick={() => onRemoveRepeated(section, num)}
+                              className="w-5 h-5 flex items-center justify-center rounded-md bg-card hover:bg-sticker-missing/20 text-sticker-missing transition-colors active:scale-90"
+                              title="Di una en trade"
+                            >
+                              <Minus className="w-3 h-3" />
+                            </button>
+                            {/* + suma copia */}
+                            <button
+                              onClick={() => onAddRepeated(section, num)}
+                              className="w-5 h-5 flex items-center justify-center rounded-md bg-card hover:bg-sticker-repeated/20 text-sticker-repeated transition-colors active:scale-90"
+                              title="Conseguí otra repetida"
+                            >
+                              <Plus className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          // Botón ✓ - la recibí
+                          <button
+                            onClick={() => onUpdate(section, num, 'has', 1)}
+                            className="w-5 h-5 flex items-center justify-center rounded-md bg-sticker-has/20 hover:bg-sticker-has/40 text-sticker-has ml-1 transition-colors active:scale-90"
+                            title="Ya la recibí"
+                          >
+                            <Check className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
