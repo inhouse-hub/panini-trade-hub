@@ -291,16 +291,15 @@ export function Dashboard() {
         </div>
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span><span className="font-mono font-bold text-foreground">{ownedCount}</span> / {totalStickers} estampas</span>
-          <span>Faltan <span className="font-mono font-bold text-sticker-missing">{stats.missing}</span></span>
+          <span>Faltan <span className="font-mono font-bold text-sticker-missing">{stats.missing + stats.unmarked}</span></span>
         </div>
       </div>
 
-      {/* ═══ Stats grid (4 cards) ═══ */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* ═══ Stats grid (3 cards) ═══ */}
+      <div className="grid grid-cols-3 gap-3">
         <StatCard icon={Check} label="Tiene" value={stats.has} pct={(stats.has / totalStickers) * 100} color="has" />
         <StatCard icon={RefreshCw} label="Repetidas" value={stats.repeated} sub={`${stats.repeatedCount} copias`} color="repeated" />
-        <StatCard icon={X} label="Faltan" value={stats.missing} pct={(stats.missing / totalStickers) * 100} color="missing" />
-        <StatCard icon={Circle} label="Sin revisar" value={stats.unmarked} pct={(stats.unmarked / totalStickers) * 100} color="muted" />
+        <StatCard icon={X} label="Faltan" value={stats.missing + stats.unmarked} pct={((stats.missing + stats.unmarked) / totalStickers) * 100} color="missing" />
       </div>
 
       {/* ═══ Top sections row: cerca de completar + faltan más ═══ */}
